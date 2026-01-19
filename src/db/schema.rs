@@ -146,6 +146,72 @@ pub struct ConstraintName(String);
 )]
 pub struct IndexName(String);
 
+/// A PostgreSQL type name.
+///
+/// Corresponds to `pg_type.typname`.
+#[nutype(
+    validate(not_empty),
+    derive(
+        Debug,
+        Clone,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        Serialize,
+        Deserialize,
+        AsRef,
+        Deref,
+        Into
+    )
+)]
+pub struct TypeName(String);
+
+/// A PostgreSQL sequence name.
+///
+/// Corresponds to the `relname` of a sequence in `pg_class`.
+#[nutype(
+    validate(not_empty),
+    derive(
+        Debug,
+        Clone,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        Serialize,
+        Deserialize,
+        AsRef,
+        Deref,
+        Into
+    )
+)]
+pub struct SequenceName(String);
+
+/// A PostgreSQL collation name.
+///
+/// Corresponds to `pg_collation.collname`.
+#[nutype(
+    validate(not_empty),
+    derive(
+        Debug,
+        Clone,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        Serialize,
+        Deserialize,
+        AsRef,
+        Deref,
+        Into
+    )
+)]
+pub struct CollationName(String);
+
 // =============================================================================
 // Relation Kind (pg_class.relkind)
 // =============================================================================
@@ -348,6 +414,25 @@ mod tests {
         #[test]
         fn index_name_valid() {
             let name = IndexName::try_new("users_email_idx".to_string());
+            assert!(name.is_ok());
+        }
+
+        #[test]
+        fn type_name_valid() {
+            let name = TypeName::try_new("int4".to_string());
+            assert!(name.is_ok());
+            assert_eq!(name.unwrap().as_ref(), "int4");
+        }
+
+        #[test]
+        fn sequence_name_valid() {
+            let name = SequenceName::try_new("users_id_seq".to_string());
+            assert!(name.is_ok());
+        }
+
+        #[test]
+        fn collation_name_valid() {
+            let name = CollationName::try_new("en_US".to_string());
             assert!(name.is_ok());
         }
     }
