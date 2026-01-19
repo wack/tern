@@ -1,3 +1,5 @@
+pub mod schema;
+
 use rustls::ClientConfig;
 use tokio_postgres::Client;
 use tokio_postgres_rustls::MakeRustlsConnect;
