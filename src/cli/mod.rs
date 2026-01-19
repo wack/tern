@@ -5,16 +5,11 @@ pub use colors::EnableColors;
 use clap::{Parser, Subcommand};
 use tracing::level_filters::LevelFilter;
 
-#[derive(Debug, Clone, clap::ValueEnum)]
+#[derive(Debug, Default, Clone, clap::ValueEnum)]
 pub enum LogFormat {
+    #[default]
     Text,
     JSON,
-}
-
-impl Default for LogFormat {
-    fn default() -> Self {
-        Self::Text
-    }
 }
 
 #[derive(Debug, Parser, Clone)]

@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod db;
 
 #[cfg(test)]
 mod tests {
