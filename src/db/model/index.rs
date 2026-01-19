@@ -173,6 +173,9 @@ mod tests {
         };
 
         assert!(index.predicate.is_some());
-        assert_eq!(index.predicate.as_ref().unwrap().as_ref(), "status = 'active'");
+        assert_eq!(
+            index.predicate.as_ref().unwrap().as_ref(),
+            "status = 'active'"
+        );
     }
 }

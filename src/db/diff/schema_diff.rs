@@ -4,11 +4,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::db::model::{
-    Column, Constraint, EnumType, Index, Sequence, Table, TableKind, View,
-};
-use crate::db::model::types::{Comment, QualifiedCollationName, SqlExpr, TypeInfo};
 use crate::db::model::column::{GeneratedColumn, IdentityKind};
+use crate::db::model::types::{Comment, QualifiedCollationName, SqlExpr, TypeInfo};
+use crate::db::model::{Column, Constraint, EnumType, Index, Sequence, Table, TableKind, View};
 use crate::db::schema::{
     ColumnName, ConstraintName, IndexName, SchemaName, SequenceName, TableName, TypeName,
 };
@@ -205,9 +203,7 @@ pub struct ModifiedView {
 impl ModifiedView {
     /// Returns true if there are no actual modifications.
     pub fn is_empty(&self) -> bool {
-        self.definition.is_none()
-            && self.is_materialized.is_none()
-            && self.comment.is_none()
+        self.definition.is_none() && self.is_materialized.is_none() && self.comment.is_none()
     }
 }
 

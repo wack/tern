@@ -46,6 +46,7 @@
 
 mod compare;
 mod schema_diff;
+pub mod similarity;
 mod types;
 
 // Re-export main types
@@ -55,6 +56,7 @@ pub use schema_diff::{
     ModifiedEnum, ModifiedIndex, ModifiedSequence, ModifiedTable, ModifiedView, NamespaceDiff,
     SequenceDiff, TableDiff, ViewDiff,
 };
+pub use similarity::{ColumnSimilarityConfig, SimilarityConfig};
 pub use types::{Diff, DiffConfig, FieldChange, PotentialRename};
 
 #[cfg(test)]

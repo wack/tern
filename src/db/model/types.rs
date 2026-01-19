@@ -243,11 +243,26 @@ mod tests {
 
         #[test]
         fn from_char() {
-            assert_eq!(ForeignKeyAction::try_from('a'), Ok(ForeignKeyAction::NoAction));
-            assert_eq!(ForeignKeyAction::try_from('r'), Ok(ForeignKeyAction::Restrict));
-            assert_eq!(ForeignKeyAction::try_from('c'), Ok(ForeignKeyAction::Cascade));
-            assert_eq!(ForeignKeyAction::try_from('n'), Ok(ForeignKeyAction::SetNull));
-            assert_eq!(ForeignKeyAction::try_from('d'), Ok(ForeignKeyAction::SetDefault));
+            assert_eq!(
+                ForeignKeyAction::try_from('a'),
+                Ok(ForeignKeyAction::NoAction)
+            );
+            assert_eq!(
+                ForeignKeyAction::try_from('r'),
+                Ok(ForeignKeyAction::Restrict)
+            );
+            assert_eq!(
+                ForeignKeyAction::try_from('c'),
+                Ok(ForeignKeyAction::Cascade)
+            );
+            assert_eq!(
+                ForeignKeyAction::try_from('n'),
+                Ok(ForeignKeyAction::SetNull)
+            );
+            assert_eq!(
+                ForeignKeyAction::try_from('d'),
+                Ok(ForeignKeyAction::SetDefault)
+            );
         }
 
         #[test]

@@ -105,10 +105,7 @@ impl<K, T, M> Diff<K, T, M> {
 
     /// Returns the total number of changes.
     pub fn change_count(&self) -> usize {
-        self.added.len()
-            + self.removed.len()
-            + self.modified.len()
-            + self.potential_renames.len()
+        self.added.len() + self.removed.len() + self.modified.len() + self.potential_renames.len()
     }
 }
 
@@ -119,6 +116,16 @@ pub struct DiffConfig {
     /// Items with similarity below this threshold will be treated as add/remove.
     /// Set to 1.0 to disable rename detection entirely.
     pub rename_threshold: f64,
+    /// Use advanced similarity scoring.
+    /// When enabled, uses configurable weighted scoring for table/column similarity.
+    /// When disabled, uses simpler built-in scoring functions.
+    pub use_advanced_similarity: bool,
+    /// Configuration for advanced similarity scoring.
+    /// Only used when `use_advanced_similarity` is true.
+    pub similarity_config: super::similarity::SimilarityConfig,
+    /// Configuration for column similarity scoring.
+    /// Only used when `use_advanced_similarity` is true.
+    pub column_similarity_config: super::similarity::ColumnSimilarityConfig,
 }
 
 impl Default for DiffConfig {
@@ -126,6 +133,10 @@ impl Default for DiffConfig {
         Self {
             // Default: require 50% structural similarity for rename detection
             rename_threshold: 0.5,
+            // Default: use simpler built-in scoring for backward compatibility
+            use_advanced_similarity: false,
+            similarity_config: super::similarity::SimilarityConfig::default(),
+            column_similarity_config: super::similarity::ColumnSimilarityConfig::default(),
         }
     }
 }
@@ -135,6 +146,7 @@ impl DiffConfig {
     pub fn no_rename_detection() -> Self {
         Self {
             rename_threshold: 1.0,
+            ..Default::default()
         }
     }
 
@@ -142,7 +154,26 @@ impl DiffConfig {
     pub fn with_rename_threshold(threshold: f64) -> Self {
         Self {
             rename_threshold: threshold.clamp(0.0, 1.0),
+            ..Default::default()
         }
+    }
+
+    /// Enables advanced similarity scoring with default weights.
+    pub fn with_advanced_similarity(mut self) -> Self {
+        self.use_advanced_similarity = true;
+        self
+    }
+
+    /// Enables advanced similarity scoring with custom configuration.
+    pub fn with_similarity_config(
+        mut self,
+        similarity_config: super::similarity::SimilarityConfig,
+        column_config: super::similarity::ColumnSimilarityConfig,
+    ) -> Self {
+        self.use_advanced_similarity = true;
+        self.similarity_config = similarity_config;
+        self.column_similarity_config = column_config;
+        self
     }
 }
 

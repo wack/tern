@@ -10,6 +10,12 @@ use crate::db::model::{
 };
 use crate::db::schema::ColumnName;
 
+use super::similarity;
+
+// Type aliases to reduce complexity warnings
+type TableSimilarityFn = Box<dyn Fn(&Table, &Table) -> f64>;
+type ColumnSimilarityFn = Box<dyn Fn(&Column, &Column) -> f64>;
+
 use super::schema_diff::{
     ColumnDiff, ConstraintDiff, EnumDiff, IndexDiff, ModifiedColumn, ModifiedConstraint,
     ModifiedEnum, ModifiedIndex, ModifiedSequence, ModifiedTable, ModifiedView, NamespaceDiff,
@@ -49,12 +55,19 @@ pub fn diff_namespaces_with_config(
 // =============================================================================
 
 fn diff_tables(source: &[Table], target: &[Table], config: &DiffConfig) -> TableDiff {
+    let similarity_fn: TableSimilarityFn = if config.use_advanced_similarity {
+        let sim_config = config.similarity_config.clone();
+        Box::new(move |s, t| similarity::table_similarity(s, t, &sim_config))
+    } else {
+        Box::new(table_similarity)
+    };
+
     diff_by_key(
         source,
         target,
         |t| t.name.clone(),
         |s, t| diff_table(s, t, config),
-        table_similarity,
+        |s, t| similarity_fn(s, t),
         config,
     )
 }
@@ -133,12 +146,19 @@ fn table_similarity(source: &Table, target: &Table) -> f64 {
 // =============================================================================
 
 fn diff_columns(source: &[Column], target: &[Column], config: &DiffConfig) -> ColumnDiff {
+    let similarity_fn: ColumnSimilarityFn = if config.use_advanced_similarity {
+        let col_config = config.column_similarity_config.clone();
+        Box::new(move |s, t| similarity::column_similarity(s, t, &col_config))
+    } else {
+        Box::new(column_similarity)
+    };
+
     diff_by_key(
         source,
         target,
         |c| c.name.clone(),
         diff_column,
-        column_similarity,
+        |s, t| similarity_fn(s, t),
         config,
     )
 }
@@ -278,11 +298,19 @@ fn constraint_similarity(source: &Constraint, target: &Constraint) -> f64 {
         }
         (ConstraintKind::ForeignKey(s), ConstraintKind::ForeignKey(t)) => {
             let col_sim = column_list_similarity(&s.columns, &t.columns);
-            let ref_sim = if s.referenced_table == t.referenced_table { 0.5 } else { 0.0 };
+            let ref_sim = if s.referenced_table == t.referenced_table {
+                0.5
+            } else {
+                0.0
+            };
             col_sim * 0.5 + ref_sim
         }
         (ConstraintKind::Check(s), ConstraintKind::Check(t)) => {
-            if s.expression == t.expression { 1.0 } else { 0.3 }
+            if s.expression == t.expression {
+                1.0
+            } else {
+                0.3
+            }
         }
         (ConstraintKind::Exclusion(s), ConstraintKind::Exclusion(t)) => {
             if s.elements == t.elements { 1.0 } else { 0.3 }
@@ -360,8 +388,16 @@ fn index_similarity(source: &Index, target: &Index) -> f64 {
     }
 
     // Column overlap: 50%
-    let source_cols: Vec<_> = source.columns.iter().filter_map(|c| c.column.as_ref()).collect();
-    let target_cols: Vec<_> = target.columns.iter().filter_map(|c| c.column.as_ref()).collect();
+    let source_cols: Vec<_> = source
+        .columns
+        .iter()
+        .filter_map(|c| c.column.as_ref())
+        .collect();
+    let target_cols: Vec<_> = target
+        .columns
+        .iter()
+        .filter_map(|c| c.column.as_ref())
+        .collect();
 
     if !source_cols.is_empty() || !target_cols.is_empty() {
         let source_set: HashSet<_> = source_cols.iter().collect();
@@ -430,9 +466,16 @@ fn view_similarity(source: &View, target: &View) -> f64 {
         score += 0.7;
     } else {
         // Partial credit for similar length definitions
-        let len_ratio = source.definition.as_ref().len().min(target.definition.as_ref().len())
-            as f64
-            / source.definition.as_ref().len().max(target.definition.as_ref().len()) as f64;
+        let len_ratio = source
+            .definition
+            .as_ref()
+            .len()
+            .min(target.definition.as_ref().len()) as f64
+            / source
+                .definition
+                .as_ref()
+                .len()
+                .max(target.definition.as_ref().len()) as f64;
         score += 0.3 * len_ratio;
     }
 
@@ -538,8 +581,16 @@ fn diff_enum(source: &EnumType, target: &EnumType) -> Option<ModifiedEnum> {
         .collect();
 
     // Check if common values are in the same order
-    let common_source: Vec<&String> = source.values.iter().filter(|v| target_values.contains(v)).collect();
-    let common_target: Vec<&String> = target.values.iter().filter(|v| source_values.contains(v)).collect();
+    let common_source: Vec<&String> = source
+        .values
+        .iter()
+        .filter(|v| target_values.contains(v))
+        .collect();
+    let common_target: Vec<&String> = target
+        .values
+        .iter()
+        .filter(|v| source_values.contains(v))
+        .collect();
     let values_reordered = common_source != common_target;
 
     let comment = FieldChange::from_diff(source.comment.clone(), target.comment.clone());

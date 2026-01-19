@@ -1,6 +1,7 @@
 //! Tests for schema comparison.
 
-use crate::db::diff::{diff_namespaces, diff_namespaces_with_config, DiffConfig};
+use crate::db::diff::{DiffConfig, diff_namespaces, diff_namespaces_with_config};
+use crate::db::model::Column;
 use crate::db::model::constraint::{
     CheckConstraint, Constraint, ConstraintKind, ForeignKeyConstraint, PrimaryKeyConstraint,
     UniqueConstraint,
@@ -11,10 +12,9 @@ use crate::db::model::table::{Table, TableKind};
 use crate::db::model::types::{
     ForeignKeyAction, IndexMethod, QualifiedCollationName, QualifiedTableName, SqlExpr, TypeInfo,
 };
-use crate::db::model::Column;
 use crate::db::schema::{
-    CollationName, ColumnName, ConstraintName, IndexName, Oid, SchemaName, SequenceName,
-    TableName, TypeName,
+    CollationName, ColumnName, ConstraintName, IndexName, Oid, SchemaName, SequenceName, TableName,
+    TypeName,
 };
 
 // =============================================================================
@@ -292,10 +292,7 @@ mod basic_diff_tests {
     fn detects_added_table() {
         let source = default_namespace();
         let target = Namespace {
-            tables: vec![make_table(
-                "users",
-                vec![make_column("id", "integer")],
-            )],
+            tables: vec![make_table("users", vec![make_column("id", "integer")])],
             ..default_namespace()
         };
 
@@ -309,10 +306,7 @@ mod basic_diff_tests {
     #[test]
     fn detects_removed_table() {
         let source = Namespace {
-            tables: vec![make_table(
-                "users",
-                vec![make_column("id", "integer")],
-            )],
+            tables: vec![make_table("users", vec![make_column("id", "integer")])],
             ..default_namespace()
         };
         let target = default_namespace();
@@ -369,10 +363,7 @@ mod column_diff_tests {
         let target = Namespace {
             tables: vec![make_table(
                 "users",
-                vec![
-                    make_column("id", "integer"),
-                    make_column("email", "text"),
-                ],
+                vec![make_column("id", "integer"), make_column("email", "text")],
             )],
             ..default_namespace()
         };
@@ -664,7 +655,10 @@ mod view_diff_tests {
     #[test]
     fn detects_view_definition_change() {
         let source = Namespace {
-            views: vec![make_view("active_users", "SELECT * FROM users WHERE active")],
+            views: vec![make_view(
+                "active_users",
+                "SELECT * FROM users WHERE active",
+            )],
             ..default_namespace()
         };
         let target = Namespace {
@@ -685,7 +679,10 @@ mod view_diff_tests {
     fn detects_added_view() {
         let source = default_namespace();
         let target = Namespace {
-            views: vec![make_view("active_users", "SELECT * FROM users WHERE active")],
+            views: vec![make_view(
+                "active_users",
+                "SELECT * FROM users WHERE active",
+            )],
             ..default_namespace()
         };
 
@@ -980,10 +977,7 @@ mod rename_detection_tests {
         let source = Namespace {
             tables: vec![make_table(
                 "users",
-                vec![
-                    make_column("id", "integer"),
-                    make_column("code", "integer"),
-                ],
+                vec![make_column("id", "integer"), make_column("code", "integer")],
             )],
             ..default_namespace()
         };
