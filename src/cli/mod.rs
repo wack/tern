@@ -19,27 +19,13 @@ impl Default for LogFormat {
 
 #[derive(Debug, Parser, Clone)]
 pub struct Cli {
-    #[arg(
-        long,
-        env = "LOG_LEVEL",
-        default_value = "info",
-        global = true
-    )]
+    #[arg(long, env = "LOG_LEVEL", default_value = "info", global = true)]
     pub log_level: LevelFilter,
 
-    #[arg(
-        long,
-        env = "LOG_FORMAT",
-        default_value = "text",
-        global = true
-    )]
+    #[arg(long, env = "LOG_FORMAT", default_value = "text", global = true)]
     pub log_format: LogFormat,
 
-    #[arg(
-        long,
-        default_value = "auto",
-        global = true
-    )]
+    #[arg(long, default_value = "auto", global = true)]
     pub enable_colors: EnableColors,
 
     #[command(subcommand)]

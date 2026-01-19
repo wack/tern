@@ -1,10 +1,10 @@
 [package]
-name = "rust-cli-template"
+name = "tern"
 version = "0.1.0"
 edition = "2024"
 
 [[bin]]
-name = "rust-cli-template"
+name = "tern"
 path = "src/bin/main.rs"
 
 [dependencies]
