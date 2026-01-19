@@ -1,5 +1,6 @@
 pub mod diff;
 pub mod model;
+pub mod query;
 pub mod schema;
 
 use rustls::ClientConfig;
