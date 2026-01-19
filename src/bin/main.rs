@@ -7,7 +7,9 @@ fn main() -> miette::Result<()> {
 }
 
 fn empty_command() -> miette::Result<()> {
-    Cli::command().print_long_help().expect("unable to print help message");
+    Cli::command()
+        .print_long_help()
+        .expect("unable to print help message");
     Ok(())
 }
 
