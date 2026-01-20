@@ -1055,3 +1055,484 @@ mod rename_detection_tests {
         assert!(diff.tables.potential_renames[0].similarity >= 0.7);
     }
 }
+
+// =============================================================================
+// Breaking Change Detection Tests
+// =============================================================================
+
+mod breaking_change_tests {
+    use super::*;
+    use crate::db::diff::breaking::{BreakingChangeKind, ChangeSeverity, analyze_breaking_changes};
+
+    #[test]
+    fn empty_diff_is_safe() {
+        let source = default_namespace();
+        let target = default_namespace();
+        let diff = diff_namespaces(&source, &target);
+
+        let analysis = analyze_breaking_changes(&diff);
+
+        assert!(analysis.is_safe());
+        assert_eq!(analysis.breaking_count(), 0);
+        assert_eq!(analysis.warning_count(), 0);
+    }
+
+    #[test]
+    fn adding_table_is_safe() {
+        let source = default_namespace();
+        let target = Namespace {
+            tables: vec![make_table("users", vec![make_column("id", "integer")])],
+            ..default_namespace()
+        };
+        let diff = diff_namespaces(&source, &target);
+
+        let analysis = analyze_breaking_changes(&diff);
+
+        assert!(analysis.is_safe());
+    }
+
+    #[test]
+    fn adding_nullable_column_is_safe() {
+        let source = Namespace {
+            tables: vec![make_table("users", vec![make_column("id", "integer")])],
+            ..default_namespace()
+        };
+        let target = Namespace {
+            tables: vec![make_table(
+                "users",
+                vec![make_column("id", "integer"), make_column("email", "text")],
+            )],
+            ..default_namespace()
+        };
+        let diff = diff_namespaces(&source, &target);
+
+        let analysis = analyze_breaking_changes(&diff);
+
+        assert!(analysis.is_safe());
+    }
+
+    #[test]
+    fn dropping_table_is_breaking() {
+        let source = Namespace {
+            tables: vec![make_table("users", vec![make_column("id", "integer")])],
+            ..default_namespace()
+        };
+        let target = default_namespace();
+        let diff = diff_namespaces(&source, &target);
+
+        let analysis = analyze_breaking_changes(&diff);
+
+        assert!(analysis.has_breaking_changes());
+        assert_eq!(analysis.breaking_count(), 1);
+
+        let change = analysis.breaking_changes().next().unwrap();
+        assert_eq!(change.severity, ChangeSeverity::Breaking);
+        assert!(
+            matches!(&change.kind, BreakingChangeKind::TableDropped { table } if table.as_ref() == "users")
+        );
+    }
+
+    #[test]
+    fn renaming_table_is_breaking() {
+        let source = Namespace {
+            tables: vec![make_table(
+                "users",
+                vec![
+                    make_column("id", "integer"),
+                    make_column("email", "text"),
+                    make_column("name", "text"),
+                ],
+            )],
+            ..default_namespace()
+        };
+        let target = Namespace {
+            tables: vec![make_table(
+                "accounts",
+                vec![
+                    make_column("id", "integer"),
+                    make_column("email", "text"),
+                    make_column("name", "text"),
+                ],
+            )],
+            ..default_namespace()
+        };
+        let diff = diff_namespaces(&source, &target);
+
+        let analysis = analyze_breaking_changes(&diff);
+
+        assert!(analysis.has_breaking_changes());
+        let change = analysis.breaking_changes().next().unwrap();
+        assert!(
+            matches!(&change.kind, BreakingChangeKind::TableRenamed { from, to, .. }
+            if from.as_ref() == "users" && to.as_ref() == "accounts")
+        );
+    }
+
+    #[test]
+    fn dropping_column_is_breaking() {
+        let source = Namespace {
+            tables: vec![make_table(
+                "users",
+                vec![make_column("id", "integer"), make_column("email", "text")],
+            )],
+            ..default_namespace()
+        };
+        let target = Namespace {
+            tables: vec![make_table("users", vec![make_column("id", "integer")])],
+            ..default_namespace()
+        };
+        let diff = diff_namespaces(&source, &target);
+
+        let analysis = analyze_breaking_changes(&diff);
+
+        assert!(analysis.has_breaking_changes());
+        let change = analysis.breaking_changes().next().unwrap();
+        assert!(
+            matches!(&change.kind, BreakingChangeKind::ColumnDropped { table, column }
+            if table.as_ref() == "users" && column.as_ref() == "email")
+        );
+    }
+
+    #[test]
+    fn renaming_column_is_breaking() {
+        let source = Namespace {
+            tables: vec![make_table(
+                "users",
+                vec![
+                    make_column_at_position("id", "integer", 1),
+                    make_column_at_position("email", "text", 2),
+                ],
+            )],
+            ..default_namespace()
+        };
+        let target = Namespace {
+            tables: vec![make_table(
+                "users",
+                vec![
+                    make_column_at_position("id", "integer", 1),
+                    make_column_at_position("email_address", "text", 2),
+                ],
+            )],
+            ..default_namespace()
+        };
+        let diff = diff_namespaces(&source, &target);
+
+        let analysis = analyze_breaking_changes(&diff);
+
+        assert!(analysis.has_breaking_changes());
+        let change = analysis.breaking_changes().next().unwrap();
+        assert!(
+            matches!(&change.kind, BreakingChangeKind::ColumnRenamed { table, from, to, .. }
+            if table.as_ref() == "users" && from.as_ref() == "email" && to.as_ref() == "email_address")
+        );
+    }
+
+    #[test]
+    fn making_column_non_nullable_is_breaking() {
+        let source = Namespace {
+            tables: vec![make_table(
+                "users",
+                vec![make_column_nullable("email", "text", true)],
+            )],
+            ..default_namespace()
+        };
+        let target = Namespace {
+            tables: vec![make_table(
+                "users",
+                vec![make_column_nullable("email", "text", false)],
+            )],
+            ..default_namespace()
+        };
+        let diff = diff_namespaces(&source, &target);
+
+        let analysis = analyze_breaking_changes(&diff);
+
+        assert!(analysis.has_breaking_changes());
+        let change = analysis.breaking_changes().next().unwrap();
+        assert!(
+            matches!(&change.kind, BreakingChangeKind::ColumnMadeNonNullable { table, column }
+            if table.as_ref() == "users" && column.as_ref() == "email")
+        );
+    }
+
+    #[test]
+    fn making_column_nullable_is_safe() {
+        let source = Namespace {
+            tables: vec![make_table(
+                "users",
+                vec![make_column_nullable("email", "text", false)],
+            )],
+            ..default_namespace()
+        };
+        let target = Namespace {
+            tables: vec![make_table(
+                "users",
+                vec![make_column_nullable("email", "text", true)],
+            )],
+            ..default_namespace()
+        };
+        let diff = diff_namespaces(&source, &target);
+
+        let analysis = analyze_breaking_changes(&diff);
+
+        // Making nullable is safe (no breaking changes)
+        assert!(analysis.is_safe());
+    }
+
+    #[test]
+    fn narrowing_column_type_is_breaking() {
+        // bigint -> integer is narrowing
+        let source = Namespace {
+            tables: vec![make_table("users", vec![make_column("id", "bigint")])],
+            ..default_namespace()
+        };
+        let target = Namespace {
+            tables: vec![make_table("users", vec![make_column("id", "integer")])],
+            ..default_namespace()
+        };
+        let diff = diff_namespaces(&source, &target);
+
+        let analysis = analyze_breaking_changes(&diff);
+
+        assert!(analysis.has_breaking_changes());
+        let change = analysis.breaking_changes().next().unwrap();
+        assert!(matches!(
+            &change.kind,
+            BreakingChangeKind::ColumnTypeChanged { .. }
+        ));
+    }
+
+    #[test]
+    fn widening_column_type_is_safe() {
+        // integer -> bigint is widening
+        let source = Namespace {
+            tables: vec![make_table("users", vec![make_column("id", "integer")])],
+            ..default_namespace()
+        };
+        let target = Namespace {
+            tables: vec![make_table("users", vec![make_column("id", "bigint")])],
+            ..default_namespace()
+        };
+        let diff = diff_namespaces(&source, &target);
+
+        let analysis = analyze_breaking_changes(&diff);
+
+        // Widening is safe
+        assert!(analysis.is_safe());
+    }
+
+    #[test]
+    fn adding_constraint_is_warning() {
+        let source = Namespace {
+            tables: vec![make_table("users", vec![make_column("email", "text")])],
+            ..default_namespace()
+        };
+
+        let mut target_table = make_table("users", vec![make_column("email", "text")]);
+        target_table
+            .constraints
+            .push(make_unique_constraint("users_email_unique", vec!["email"]));
+
+        let target = Namespace {
+            tables: vec![target_table],
+            ..default_namespace()
+        };
+
+        let diff = diff_namespaces(&source, &target);
+        let analysis = analyze_breaking_changes(&diff);
+
+        // Adding a constraint is a warning (might fail on existing data)
+        assert!(!analysis.is_safe());
+        assert!(!analysis.has_breaking_changes());
+        assert!(analysis.has_warnings_or_breaking());
+        assert_eq!(analysis.warning_count(), 1);
+
+        let warning = analysis.warnings().next().unwrap();
+        assert!(matches!(
+            &warning.kind,
+            BreakingChangeKind::UniqueConstraintAdded { .. }
+        ));
+    }
+
+    #[test]
+    fn dropping_constraint_is_safe() {
+        let mut source_table = make_table("users", vec![make_column("email", "text")]);
+        source_table
+            .constraints
+            .push(make_unique_constraint("users_email_unique", vec!["email"]));
+
+        let target_table = make_table("users", vec![make_column("email", "text")]);
+
+        let source = Namespace {
+            tables: vec![source_table],
+            ..default_namespace()
+        };
+        let target = Namespace {
+            tables: vec![target_table],
+            ..default_namespace()
+        };
+
+        let diff = diff_namespaces(&source, &target);
+        let analysis = analyze_breaking_changes(&diff);
+
+        // Dropping constraints is safe
+        assert!(analysis.is_safe());
+    }
+
+    #[test]
+    fn removing_enum_value_is_breaking() {
+        let source = Namespace {
+            enums: vec![make_enum("status", vec!["pending", "active", "archived"])],
+            ..default_namespace()
+        };
+        let target = Namespace {
+            enums: vec![make_enum("status", vec!["pending", "active"])],
+            ..default_namespace()
+        };
+
+        let diff = diff_namespaces(&source, &target);
+        let analysis = analyze_breaking_changes(&diff);
+
+        assert!(analysis.has_breaking_changes());
+        let change = analysis.breaking_changes().next().unwrap();
+        assert!(
+            matches!(&change.kind, BreakingChangeKind::EnumValueRemoved { enum_type, values }
+            if enum_type.as_ref() == "status" && values == &vec!["archived".to_string()])
+        );
+    }
+
+    #[test]
+    fn adding_enum_value_is_safe() {
+        let source = Namespace {
+            enums: vec![make_enum("status", vec!["pending", "active"])],
+            ..default_namespace()
+        };
+        let target = Namespace {
+            enums: vec![make_enum("status", vec!["pending", "active", "archived"])],
+            ..default_namespace()
+        };
+
+        let diff = diff_namespaces(&source, &target);
+        let analysis = analyze_breaking_changes(&diff);
+
+        // Adding enum values is safe
+        assert!(analysis.is_safe());
+    }
+
+    #[test]
+    fn reordering_enum_values_is_breaking() {
+        let source = Namespace {
+            enums: vec![make_enum("status", vec!["a", "b", "c"])],
+            ..default_namespace()
+        };
+        let target = Namespace {
+            enums: vec![make_enum("status", vec!["a", "c", "b"])],
+            ..default_namespace()
+        };
+
+        let diff = diff_namespaces(&source, &target);
+        let analysis = analyze_breaking_changes(&diff);
+
+        assert!(analysis.has_breaking_changes());
+        let change = analysis.breaking_changes().next().unwrap();
+        assert!(
+            matches!(&change.kind, BreakingChangeKind::EnumValuesReordered { enum_type }
+            if enum_type.as_ref() == "status")
+        );
+    }
+
+    #[test]
+    fn dropping_view_is_breaking() {
+        let source = Namespace {
+            views: vec![make_view(
+                "active_users",
+                "SELECT * FROM users WHERE active",
+            )],
+            ..default_namespace()
+        };
+        let target = default_namespace();
+
+        let diff = diff_namespaces(&source, &target);
+        let analysis = analyze_breaking_changes(&diff);
+
+        assert!(analysis.has_breaking_changes());
+        let change = analysis.breaking_changes().next().unwrap();
+        assert!(
+            matches!(&change.kind, BreakingChangeKind::ViewDropped { view }
+            if view.as_ref() == "active_users")
+        );
+    }
+
+    #[test]
+    fn dropping_sequence_is_breaking() {
+        let source = Namespace {
+            sequences: vec![make_sequence("users_id_seq", 1, 1)],
+            ..default_namespace()
+        };
+        let target = default_namespace();
+
+        let diff = diff_namespaces(&source, &target);
+        let analysis = analyze_breaking_changes(&diff);
+
+        assert!(analysis.has_breaking_changes());
+        let change = analysis.breaking_changes().next().unwrap();
+        assert!(
+            matches!(&change.kind, BreakingChangeKind::SequenceDropped { sequence }
+            if sequence.as_ref() == "users_id_seq")
+        );
+    }
+
+    #[test]
+    fn multiple_breaking_changes_all_detected() {
+        let source = Namespace {
+            tables: vec![
+                make_table("users", vec![make_column("id", "integer")]),
+                make_table("orders", vec![make_column("id", "integer")]),
+            ],
+            views: vec![make_view("user_view", "SELECT * FROM users")],
+            ..default_namespace()
+        };
+        let target = Namespace {
+            tables: vec![make_table("users", vec![])], // dropped column
+            // dropped orders table
+            // dropped view
+            ..default_namespace()
+        };
+
+        let config = DiffConfig::no_rename_detection();
+        let diff = diff_namespaces_with_config(&source, &target, &config);
+        let analysis = analyze_breaking_changes(&diff);
+
+        // Should detect: dropped table, dropped column, dropped view
+        assert!(analysis.has_breaking_changes());
+        assert_eq!(analysis.breaking_count(), 3);
+    }
+
+    #[test]
+    fn view_materialization_change_is_breaking() {
+        let mut source_view = make_view("cached_data", "SELECT * FROM data");
+        source_view.is_materialized = false;
+
+        let mut target_view = make_view("cached_data", "SELECT * FROM data");
+        target_view.is_materialized = true;
+
+        let source = Namespace {
+            views: vec![source_view],
+            ..default_namespace()
+        };
+        let target = Namespace {
+            views: vec![target_view],
+            ..default_namespace()
+        };
+
+        let diff = diff_namespaces(&source, &target);
+        let analysis = analyze_breaking_changes(&diff);
+
+        assert!(analysis.has_breaking_changes());
+        let change = analysis.breaking_changes().next().unwrap();
+        assert!(
+            matches!(&change.kind, BreakingChangeKind::MaterializationChanged { view, became_materialized }
+            if view.as_ref() == "cached_data" && *became_materialized)
+        );
+    }
+}
