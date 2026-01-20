@@ -7,12 +7,6 @@ use crate::db::schema::{Oid, SchemaName, SequenceName, TableName, TypeName};
 use super::table::Table;
 use super::types::{Comment, SqlExpr, TypeInfo};
 
-/// OID used for empty namespaces created for diffing purposes.
-///
-/// This is a sentinel value that doesn't correspond to any real PostgreSQL OID.
-/// OID 0 is reserved and never used for real objects in PostgreSQL.
-pub const EMPTY_NAMESPACE_OID: u32 = 0;
-
 /// A database schema (namespace) containing tables and other objects.
 ///
 /// This is the top-level container for all objects within a PostgreSQL schema.
@@ -60,7 +54,9 @@ impl Namespace {
     /// ```
     pub fn empty(name: &str) -> Self {
         Self {
-            oid: Oid::new(EMPTY_NAMESPACE_OID),
+            // Use default OID (0) as a sentinel value for empty namespaces.
+            // OID 0 is reserved and never used for real objects in PostgreSQL.
+            oid: Oid::default(),
             name: SchemaName::try_new(name.to_string()).expect("schema name must not be empty"),
             tables: vec![],
             views: vec![],
