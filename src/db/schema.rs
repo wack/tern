@@ -16,20 +16,24 @@ use serde::{Deserialize, Serialize};
 /// OIDs are used throughout the PostgreSQL catalog to uniquely identify
 /// database objects (tables, columns, types, etc.). They are unsigned 32-bit
 /// integers internally.
-#[nutype(derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    AsRef,
-    Into
-))]
+#[nutype(
+    default = 0,
+    derive(
+        Debug,
+        Clone,
+        Copy,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        Default,
+        Serialize,
+        Deserialize,
+        AsRef,
+        Into
+    )
+)]
 pub struct Oid(u32);
 
 // =============================================================================

@@ -1156,7 +1156,7 @@ mod tests {
     fn namespace_empty_creates_valid_namespace() {
         let ns = Namespace::empty("public");
 
-        assert_eq!(ns.oid, Oid::new(0)); // Uses EMPTY_NAMESPACE_OID
+        assert_eq!(ns.oid, Oid::default());
         assert_eq!(ns.name.as_ref(), "public");
         assert!(ns.tables.is_empty());
         assert!(ns.views.is_empty());
