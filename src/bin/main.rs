@@ -1,9 +1,10 @@
 use clap::{CommandFactory, Parser};
 use tern::cli::Cli;
 
-fn main() -> miette::Result<()> {
+#[tokio::main]
+async fn main() -> miette::Result<()> {
     let cli = Cli::parse();
-    dispatch_command(cli)
+    dispatch_command(cli).await
 }
 
 fn empty_command() -> miette::Result<()> {
@@ -13,9 +14,9 @@ fn empty_command() -> miette::Result<()> {
     Ok(())
 }
 
-fn dispatch_command(cli: Cli) -> miette::Result<()> {
+async fn dispatch_command(cli: Cli) -> miette::Result<()> {
     match &cli.cmd {
         None => empty_command(),
-        Some(cmd) => cmd.clone().dispatch(),
+        Some(cmd) => cmd.clone().dispatch().await,
     }
 }
