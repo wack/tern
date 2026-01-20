@@ -649,7 +649,7 @@ fn diff_by_key<T, K, M, KeyFn, DiffFn, SimFn>(
 ) -> Diff<K, T, M>
 where
     T: Clone,
-    K: Clone + Eq + Hash,
+    K: Clone + Eq + Hash + Ord,
     KeyFn: Fn(&T) -> K,
     DiffFn: Fn(&T, &T) -> Option<M>,
     SimFn: Fn(&T, &T) -> f64,
@@ -721,6 +721,10 @@ where
         only_in_source.retain(|k| !used_sources.contains(k));
         only_in_target.retain(|item| !used_targets.contains(&key_fn(item)));
     }
+
+    // Sort results for deterministic output (HashSet iteration order is non-deterministic)
+    only_in_source.sort();
+    only_in_target.sort_by(|a, b| key_fn(a).cmp(&key_fn(b)));
 
     Diff {
         added: only_in_target.into_iter().cloned().collect(),
