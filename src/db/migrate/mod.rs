@@ -34,6 +34,7 @@
 mod collector;
 mod error;
 mod operation;
+mod ordering;
 mod render;
 
 pub use collector::{CollectorConfig, OperationCollector};
@@ -42,4 +43,5 @@ pub use operation::{
     ColumnChanges, CommentTarget, DefaultChange, EnumValuePosition, GeneratedChange,
     IdentityChange, ObjectKind, Operation, OperationId, SequenceChanges, SetColumnType,
 };
+pub use ordering::topological_sort;
 pub use render::{IdentifierQuoting, PostgresRenderer, RenderConfig, RenderedOperation, Renderer};
