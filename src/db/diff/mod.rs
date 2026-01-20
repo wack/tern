@@ -22,6 +22,14 @@
 //! Rename detection uses similarity scoring based on structural comparison
 //! (column overlap, type matches, constraint similarity, etc.).
 //!
+//! # Breaking Change Detection
+//!
+//! The [`breaking`] module provides analysis of diffs to identify changes that would
+//! break running applications. This helps teams plan safe migrations by:
+//! - Identifying operations that will cause application errors
+//! - Classifying changes by severity (breaking, warning, non-breaking)
+//! - Enabling decomposition of breaking changes into safe migration steps
+//!
 //! # Example
 //!
 //! ```
@@ -44,6 +52,7 @@
 //! # }
 //! ```
 
+pub mod breaking;
 mod compare;
 mod schema_diff;
 pub mod similarity;
