@@ -1062,7 +1062,9 @@ mod rename_detection_tests {
 
 mod breaking_change_tests {
     use super::*;
-    use crate::db::diff::breaking::{BreakingChangeKind, ChangeSeverity, analyze_breaking_changes};
+    use crate::db::diff::breaking::{
+        BreakingChangeKind, MitigationStrategy, analyze_breaking_changes,
+    };
 
     #[test]
     fn empty_diff_is_safe() {
@@ -1073,8 +1075,7 @@ mod breaking_change_tests {
         let analysis = analyze_breaking_changes(&diff);
 
         assert!(analysis.is_safe());
-        assert_eq!(analysis.breaking_count(), 0);
-        assert_eq!(analysis.warning_count(), 0);
+        assert_eq!(analysis.len(), 0);
     }
 
     #[test]
@@ -1122,11 +1123,11 @@ mod breaking_change_tests {
 
         let analysis = analyze_breaking_changes(&diff);
 
-        assert!(analysis.has_breaking_changes());
-        assert_eq!(analysis.breaking_count(), 1);
+        assert!(!analysis.is_safe());
+        assert_eq!(analysis.len(), 1);
 
-        let change = analysis.breaking_changes().next().unwrap();
-        assert_eq!(change.severity, ChangeSeverity::Breaking);
+        let change = analysis.iter().next().unwrap();
+        assert_eq!(change.mitigation, MitigationStrategy::Destructive);
         assert!(
             matches!(&change.kind, BreakingChangeKind::TableDropped { table } if table.as_ref() == "users")
         );
@@ -1160,8 +1161,9 @@ mod breaking_change_tests {
 
         let analysis = analyze_breaking_changes(&diff);
 
-        assert!(analysis.has_breaking_changes());
-        let change = analysis.breaking_changes().next().unwrap();
+        assert!(!analysis.is_safe());
+        let change = analysis.iter().next().unwrap();
+        assert_eq!(change.mitigation, MitigationStrategy::DualWrite);
         assert!(
             matches!(&change.kind, BreakingChangeKind::TableRenamed { from, to, .. }
             if from.as_ref() == "users" && to.as_ref() == "accounts")
@@ -1185,8 +1187,9 @@ mod breaking_change_tests {
 
         let analysis = analyze_breaking_changes(&diff);
 
-        assert!(analysis.has_breaking_changes());
-        let change = analysis.breaking_changes().next().unwrap();
+        assert!(!analysis.is_safe());
+        let change = analysis.iter().next().unwrap();
+        assert_eq!(change.mitigation, MitigationStrategy::Destructive);
         assert!(
             matches!(&change.kind, BreakingChangeKind::ColumnDropped { table, column }
             if table.as_ref() == "users" && column.as_ref() == "email")
@@ -1219,8 +1222,9 @@ mod breaking_change_tests {
 
         let analysis = analyze_breaking_changes(&diff);
 
-        assert!(analysis.has_breaking_changes());
-        let change = analysis.breaking_changes().next().unwrap();
+        assert!(!analysis.is_safe());
+        let change = analysis.iter().next().unwrap();
+        assert_eq!(change.mitigation, MitigationStrategy::DualWrite);
         assert!(
             matches!(&change.kind, BreakingChangeKind::ColumnRenamed { table, from, to, .. }
             if table.as_ref() == "users" && from.as_ref() == "email" && to.as_ref() == "email_address")
@@ -1247,8 +1251,9 @@ mod breaking_change_tests {
 
         let analysis = analyze_breaking_changes(&diff);
 
-        assert!(analysis.has_breaking_changes());
-        let change = analysis.breaking_changes().next().unwrap();
+        assert!(!analysis.is_safe());
+        let change = analysis.iter().next().unwrap();
+        assert_eq!(change.mitigation, MitigationStrategy::Backfill);
         assert!(
             matches!(&change.kind, BreakingChangeKind::ColumnMadeNonNullable { table, column }
             if table.as_ref() == "users" && column.as_ref() == "email")
@@ -1294,8 +1299,9 @@ mod breaking_change_tests {
 
         let analysis = analyze_breaking_changes(&diff);
 
-        assert!(analysis.has_breaking_changes());
-        let change = analysis.breaking_changes().next().unwrap();
+        assert!(!analysis.is_safe());
+        let change = analysis.iter().next().unwrap();
+        assert_eq!(change.mitigation, MitigationStrategy::DualWrite);
         assert!(matches!(
             &change.kind,
             BreakingChangeKind::ColumnTypeChanged { .. }
@@ -1322,7 +1328,7 @@ mod breaking_change_tests {
     }
 
     #[test]
-    fn adding_constraint_is_warning() {
+    fn adding_constraint_is_breaking() {
         let source = Namespace {
             tables: vec![make_table("users", vec![make_column("email", "text")])],
             ..default_namespace()
@@ -1341,15 +1347,14 @@ mod breaking_change_tests {
         let diff = diff_namespaces(&source, &target);
         let analysis = analyze_breaking_changes(&diff);
 
-        // Adding a constraint is a warning (might fail on existing data)
+        // Adding a constraint is breaking - requires Ratchet mitigation (NOT VALID pattern)
         assert!(!analysis.is_safe());
-        assert!(!analysis.has_breaking_changes());
-        assert!(analysis.has_warnings_or_breaking());
-        assert_eq!(analysis.warning_count(), 1);
+        assert_eq!(analysis.len(), 1);
 
-        let warning = analysis.warnings().next().unwrap();
+        let change = analysis.iter().next().unwrap();
+        assert_eq!(change.mitigation, MitigationStrategy::Ratchet);
         assert!(matches!(
-            &warning.kind,
+            &change.kind,
             BreakingChangeKind::UniqueConstraintAdded { .. }
         ));
     }
@@ -1393,8 +1398,9 @@ mod breaking_change_tests {
         let diff = diff_namespaces(&source, &target);
         let analysis = analyze_breaking_changes(&diff);
 
-        assert!(analysis.has_breaking_changes());
-        let change = analysis.breaking_changes().next().unwrap();
+        assert!(!analysis.is_safe());
+        let change = analysis.iter().next().unwrap();
+        assert_eq!(change.mitigation, MitigationStrategy::Destructive);
         assert!(
             matches!(&change.kind, BreakingChangeKind::EnumValueRemoved { enum_type, values }
             if enum_type.as_ref() == "status" && values == &vec!["archived".to_string()])
@@ -1433,8 +1439,9 @@ mod breaking_change_tests {
         let diff = diff_namespaces(&source, &target);
         let analysis = analyze_breaking_changes(&diff);
 
-        assert!(analysis.has_breaking_changes());
-        let change = analysis.breaking_changes().next().unwrap();
+        assert!(!analysis.is_safe());
+        let change = analysis.iter().next().unwrap();
+        assert_eq!(change.mitigation, MitigationStrategy::Destructive);
         assert!(
             matches!(&change.kind, BreakingChangeKind::EnumValuesReordered { enum_type }
             if enum_type.as_ref() == "status")
@@ -1455,8 +1462,9 @@ mod breaking_change_tests {
         let diff = diff_namespaces(&source, &target);
         let analysis = analyze_breaking_changes(&diff);
 
-        assert!(analysis.has_breaking_changes());
-        let change = analysis.breaking_changes().next().unwrap();
+        assert!(!analysis.is_safe());
+        let change = analysis.iter().next().unwrap();
+        assert_eq!(change.mitigation, MitigationStrategy::Destructive);
         assert!(
             matches!(&change.kind, BreakingChangeKind::ViewDropped { view }
             if view.as_ref() == "active_users")
@@ -1474,8 +1482,9 @@ mod breaking_change_tests {
         let diff = diff_namespaces(&source, &target);
         let analysis = analyze_breaking_changes(&diff);
 
-        assert!(analysis.has_breaking_changes());
-        let change = analysis.breaking_changes().next().unwrap();
+        assert!(!analysis.is_safe());
+        let change = analysis.iter().next().unwrap();
+        assert_eq!(change.mitigation, MitigationStrategy::Destructive);
         assert!(
             matches!(&change.kind, BreakingChangeKind::SequenceDropped { sequence }
             if sequence.as_ref() == "users_id_seq")
@@ -1504,8 +1513,13 @@ mod breaking_change_tests {
         let analysis = analyze_breaking_changes(&diff);
 
         // Should detect: dropped table, dropped column, dropped view
-        assert!(analysis.has_breaking_changes());
-        assert_eq!(analysis.breaking_count(), 3);
+        assert!(!analysis.is_safe());
+        assert_eq!(analysis.len(), 3);
+        // All drops are Destructive
+        assert_eq!(
+            analysis.count_by_mitigation(MitigationStrategy::Destructive),
+            3
+        );
     }
 
     #[test]
@@ -1528,8 +1542,9 @@ mod breaking_change_tests {
         let diff = diff_namespaces(&source, &target);
         let analysis = analyze_breaking_changes(&diff);
 
-        assert!(analysis.has_breaking_changes());
-        let change = analysis.breaking_changes().next().unwrap();
+        assert!(!analysis.is_safe());
+        let change = analysis.iter().next().unwrap();
+        assert_eq!(change.mitigation, MitigationStrategy::DualWrite);
         assert!(
             matches!(&change.kind, BreakingChangeKind::MaterializationChanged { view, became_materialized }
             if view.as_ref() == "cached_data" && *became_materialized)

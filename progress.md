@@ -1,34 +1,70 @@
 # Breaking Change Detection - Design Progress
 
-## Current State
+## Current State: Implemented
 
-We have an initial implementation of breaking change detection in `src/db/diff/breaking.rs`. This module analyzes schema diffs and classifies changes by their potential impact on running applications.
+We have a complete implementation of breaking change detection in `src/db/diff/breaking.rs`. This module analyzes schema diffs and classifies changes as either **safe** (can deploy directly) or **breaking** (requires a mitigation strategy).
 
 ### What Was Built
 
-- `ChangeSeverity` enum with three levels: `NonBreaking`, `Warning`, `Breaking`
-- `BreakingChangeKind` enum with 16 specific change types
-- `BreakingChange` struct with kind, severity, and human-readable description
-- `BreakingChangeAnalysis` aggregator with query methods
+- `MitigationStrategy` enum with four strategies: `DualWrite`, `Backfill`, `Ratchet`, `Destructive`
+- `BreakingChangeKind` enum with 17 specific change types, each mapped to a mitigation strategy
+- `BreakingChange` struct with kind, mitigation strategy, and human-readable description
+- `BreakingChangeAnalysis` aggregator with query methods (`is_safe()`, `by_mitigation()`, `count_by_mitigation()`)
 - `analyze_breaking_changes()` function that walks a `NamespaceDiff`
-- Type change classification (safe widening vs dangerous narrowing)
-- 151 passing tests
+- Type change classification (safe widening vs breaking narrowing)
+- 94 passing tests (unit + integration)
 
-## Design Problem Identified
+### API Overview
 
-The `Warning` severity category is flawed. The original thinking was:
+```rust
+use tern::db::diff::{diff_namespaces, NamespaceDiff};
+use tern::db::diff::breaking::{analyze_breaking_changes, MitigationStrategy};
 
-> "Adding constraints might fail depending on existing data, so they're warnings rather than breaking changes."
+let diff = diff_namespaces(&source, &target);
+let analysis = analyze_breaking_changes(&diff);
 
-This is incorrect. **If a migration might fail, it IS breaking.** You cannot deploy it with confidence. The distinction between "definitely fails" and "might fail" is not meaningful from a deployment safety perspective.
+if analysis.is_safe() {
+    println!("Migration is safe to apply directly");
+} else {
+    println!("Found {} breaking changes:", analysis.len());
+    for change in analysis.iter() {
+        println!("  [{}] {}", change.mitigation.as_str(), change.description);
+    }
 
-### The Core Insight
+    // Query by mitigation strategy
+    let ratchet_count = analysis.count_by_mitigation(MitigationStrategy::Ratchet);
+    println!("Changes requiring NOT VALID pattern: {}", ratchet_count);
+}
+```
 
-A constraint addition like `ALTER TABLE users ADD CONSTRAINT users_email_unique UNIQUE (email)` is breaking because:
+## Design Evolution
 
-1. It will fail immediately if existing data has duplicates
-2. Even if it succeeds today, there's a race condition - new data might create duplicates between when you tested and when you deployed
-3. You cannot safely deploy it without additional coordination
+### Original Design (Rejected)
+
+The original implementation used a `ChangeSeverity` enum with three levels:
+- `NonBreaking` - Safe changes
+- `Warning` - Might fail depending on data
+- `Breaking` - Definitely problematic
+
+The "Warning" category was flawed. **If a migration might fail, it IS breaking.** You cannot deploy it with confidence.
+
+### Current Design: Mitigation Strategies
+
+Rather than classifying by severity, we classify by **what kind of process is required to safely execute the change**:
+
+| Strategy | Description | Examples |
+|----------|-------------|----------|
+| `DualWrite` | Requires parallel structures with synchronized writes | Rename column/table, change column type |
+| `Backfill` | Requires populating data before completion | Add NOT NULL to existing column |
+| `Ratchet` | Requires NOT VALID + backfill + VALIDATE pattern | Add UNIQUE/CHECK/FK/PK constraint |
+| `Destructive` | Intentionally removes data/structure (irreversible) | Drop table/column, remove enum value |
+
+### Why This Is Better
+
+1. **Binary safety**: A change is either Safe or it requires mitigation - no ambiguous middle ground
+2. **Actionable**: Each strategy implies a specific decomposition pattern
+3. **Pattern-based**: Maps directly to known PostgreSQL migration patterns
+4. **Time-aware**: Acknowledges that some changes fundamentally cannot be atomic
 
 ## The NOT VALID Ratchet Pattern
 
@@ -45,32 +81,11 @@ ALTER TABLE users ADD CONSTRAINT users_email_unique UNIQUE (email) NOT VALID;
 ALTER TABLE users VALIDATE CONSTRAINT users_email_unique;
 ```
 
-This pattern creates a **ratchet**: once engaged, it prevents new violations while giving you time to fix existing ones. The ratchet is the key mechanism that makes the migration safe.
+This pattern creates a **ratchet**: once engaged, it prevents new violations while giving you time to fix existing ones.
 
-## Proposed Redesign: Mitigation Strategies
+## Mitigation Pattern Details
 
-Rather than classifying by "severity," we should classify by **what kind of process is required to safely execute the change**. This directly supports the goal of decomposing breaking changes into safe steps.
-
-### Proposed Categories
-
-| Category | Description | Examples |
-|----------|-------------|----------|
-| **Safe** | No mitigation needed. Can deploy directly. | Add nullable column, add index, drop constraint, add enum value |
-| **DualWriteRequired** | Requires a period where both old and new structures coexist with synchronized writes. | Rename column, rename table, change column type |
-| **BackfillRequired** | Requires populating data before the change can complete. | Add column with NOT NULL (add nullable → backfill → set NOT NULL) |
-| **RatchetRequired** | Requires the NOT VALID + backfill + VALIDATE pattern. | Add UNIQUE/CHECK/FK/PK constraint |
-| **Destructive** | Intentionally removes data or structure. May be desired, but is irreversible. | Drop table, drop column, remove enum value |
-
-### Why This Is Better
-
-1. **Actionable**: Each category implies a specific decomposition strategy
-2. **Binary safety**: A change is either Safe or it requires mitigation - no ambiguous middle ground
-3. **Time-aware**: Acknowledges that some changes fundamentally cannot be atomic
-4. **Pattern-based**: Maps directly to known PostgreSQL migration patterns
-
-### Mitigation Pattern Details
-
-#### DualWriteRequired (Rename Pattern)
+### DualWrite (Rename Pattern)
 
 To rename `users.email` → `users.email_address`:
 
@@ -81,7 +96,7 @@ To rename `users.email` → `users.email_address`:
 5. Deploy application that writes ONLY to new column
 6. Drop old column `email` (Destructive, but now safe because nothing uses it)
 
-#### BackfillRequired (NOT NULL Pattern)
+### Backfill (NOT NULL Pattern)
 
 To add `NOT NULL` to `users.email`:
 
@@ -91,7 +106,7 @@ To add `NOT NULL` to `users.email`:
 4. Add actual NOT NULL: `ALTER COLUMN email SET NOT NULL`
 5. Drop the CHECK constraint (now redundant)
 
-#### RatchetRequired (Constraint Pattern)
+### Ratchet (Constraint Pattern)
 
 To add `UNIQUE(email)`:
 
@@ -99,10 +114,9 @@ To add `UNIQUE(email)`:
 2. Fix any existing duplicates (application-specific logic)
 3. Validate: `VALIDATE CONSTRAINT ...`
 
-#### Destructive
+### Destructive
 
 Drop operations are fundamentally different:
-
 - They're often intentional (cleaning up unused structures)
 - They can't be "decomposed" - they're the end state
 - But they must be verified safe (nothing references the dropped object)
@@ -112,37 +126,25 @@ For drops, the decomposition is temporal:
 2. Wait for all old application instances to drain
 3. Perform the drop
 
-## Open Questions
+## Open Questions for Future Work
 
-1. **Should we track the specific mitigation pattern on each BreakingChangeKind?**
-   - Pro: Makes the required steps explicit
-   - Con: Adds complexity, patterns may vary by context
-
-2. **How do we handle changes that combine multiple categories?**
+1. **How do we handle changes that combine multiple categories?**
    - Example: Rename column AND change type simultaneously
    - Likely answer: Decompose into separate changes, each with its own category
 
-3. **Should "Destructive" be further subdivided?**
+2. **Should "Destructive" be further subdivided?**
    - "Intentional removal" vs "Data loss risk"
    - Dropping an unused table is different from dropping a table with data
 
-4. **How do we represent the decomposed migration steps?**
+3. **How do we represent the decomposed migration steps?**
    - This module detects breaking changes
    - A separate module would generate the decomposition
    - What's the interface between them?
 
-5. **What about lock-related concerns?**
+4. **What about lock-related concerns?**
    - Some operations require `ACCESS EXCLUSIVE` locks
    - Adding an index without `CONCURRENTLY` blocks writes
    - Is this a separate axis of classification?
-
-## Next Steps
-
-1. Refactor `ChangeSeverity` to use mitigation-based categories
-2. Remove the `Warning` level entirely - changes are Safe or they require mitigation
-3. Add `MitigationStrategy` enum that describes HOW to decompose each breaking change
-4. Consider whether the `BreakingChangeKind` variants need restructuring to align with mitigation strategies
-5. Update tests to reflect the new classification
 
 ## References
 
