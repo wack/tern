@@ -1,0 +1,11 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Create table public.order_items
+CREATE TABLE public.order_items (
+    order_id integer NOT NULL,
+    product_id integer NOT NULL,
+    quantity integer,
+    CONSTRAINT order_items_pkey PRIMARY KEY (order_id, product_id)
+);

@@ -1,0 +1,13 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Create table public.posts
+CREATE TABLE public.posts (
+    id integer NOT NULL GENERATED ALWAYS AS IDENTITY,
+    title text,
+    status text DEFAULT 'draft',
+    created_at timestamp with time zone DEFAULT now(),
+    view_count integer DEFAULT 0,
+    CONSTRAINT posts_pkey PRIMARY KEY (id)
+);

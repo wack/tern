@@ -1,0 +1,22 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Create table public.comments
+CREATE TABLE public.comments (
+    id integer NOT NULL GENERATED ALWAYS AS IDENTITY,
+    post_id integer NOT NULL,
+    author_id integer NOT NULL,
+    content text NOT NULL,
+    created_at timestamp with time zone NOT NULL DEFAULT now(),
+    CONSTRAINT comments_pkey PRIMARY KEY (id)
+);
+
+-- Create index comments_post_id_idx on public.comments
+CREATE INDEX comments_post_id_idx ON public.comments (post_id);
+
+-- Add constraint comments_post_id_fkey on public.comments
+ALTER TABLE public.comments ADD CONSTRAINT comments_post_id_fkey FOREIGN KEY (post_id) REFERENCES public.posts (id);
+
+-- Add constraint comments_author_id_fkey on public.comments
+ALTER TABLE public.comments ADD CONSTRAINT comments_author_id_fkey FOREIGN KEY (author_id) REFERENCES public.users (id);

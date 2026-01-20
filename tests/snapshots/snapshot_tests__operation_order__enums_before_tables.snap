@@ -1,0 +1,6 @@
+---
+source: tests/snapshot_tests.rs
+expression: "get_operation_descriptions(&source, &target)"
+---
+- Create enum type public.status
+- Create table public.items

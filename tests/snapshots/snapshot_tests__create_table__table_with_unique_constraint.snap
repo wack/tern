@@ -1,0 +1,13 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Create table public.users
+CREATE TABLE public.users (
+    id integer NOT NULL,
+    email text NOT NULL,
+    username text NOT NULL,
+    CONSTRAINT users_pkey PRIMARY KEY (id),
+    CONSTRAINT users_email_key UNIQUE (email),
+    CONSTRAINT users_username_key UNIQUE (username)
+);

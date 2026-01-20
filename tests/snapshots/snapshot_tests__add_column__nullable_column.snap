@@ -1,0 +1,6 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Add column public.users.email
+ALTER TABLE public.users ADD COLUMNemail text;

@@ -1,0 +1,6 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Drop sequence public.old_seq
+DROP SEQUENCE public.old_seq;

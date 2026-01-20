@@ -1,0 +1,6 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Add constraint users_email_key on public.users
+ALTER TABLE public.users ADD CONSTRAINT users_email_key UNIQUE (email);

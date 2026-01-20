@@ -1,0 +1,6 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Add value 'archived' to enum public.status
+ALTER TYPE public.status ADD VALUE 'archived';

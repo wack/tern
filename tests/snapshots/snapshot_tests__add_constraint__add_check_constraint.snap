@@ -1,0 +1,6 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Add constraint price_positive on public.products
+ALTER TABLE public.products ADD CONSTRAINT price_positive CHECK (price > 0);

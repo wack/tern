@@ -1,0 +1,9 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Drop constraint users_email_key from public.users
+ALTER TABLE public.users DROP CONSTRAINT users_email_key;
+
+-- Drop index public.users_email_key
+DROP INDEX public.users_email_key;

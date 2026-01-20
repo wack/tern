@@ -1,0 +1,6 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Drop constraint price_positive from public.products
+ALTER TABLE public.products DROP CONSTRAINT price_positive;

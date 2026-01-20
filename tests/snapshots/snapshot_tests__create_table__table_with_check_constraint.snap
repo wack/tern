@@ -1,0 +1,13 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Create table public.products
+CREATE TABLE public.products (
+    id integer NOT NULL,
+    price numeric NOT NULL,
+    quantity integer NOT NULL,
+    CONSTRAINT products_pkey PRIMARY KEY (id),
+    CONSTRAINT price_positive CHECK (price > 0),
+    CONSTRAINT quantity_non_negative CHECK (quantity >= 0)
+);
