@@ -1,3 +1,8 @@
+pub mod diff;
+pub mod model;
+pub mod query;
+pub mod schema;
+
 use rustls::ClientConfig;
 use tokio_postgres::Client;
 use tokio_postgres_rustls::MakeRustlsConnect;

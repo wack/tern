@@ -7,6 +7,7 @@ mod tests {
     fn smoke_test() {
         // This test exists to ensure the test infrastructure works
         // before any real code is written.
-        assert!(true);
+        let expected = 2 + 2;
+        assert_eq!(expected, 4);
     }
 }
