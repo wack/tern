@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand};
 use miette::{Context, IntoDiagnostic};
 use tracing::level_filters::LevelFilter;
 
+use crate::db::diff::breaking::analyze_breaking_changes;
 use crate::db::migrate::{MigrationPlan, PostgresRenderer, RenderConfig};
 use crate::db::query::{PostgresCatalog, diff_from_empty};
 use crate::db::{self};
@@ -85,6 +86,16 @@ async fn print_migrations(database_url: &str, schema_name: &str) -> miette::Resu
         .await
         .into_diagnostic()
         .wrap_err_with(|| format!("Failed to load schema '{}'", schema_name))?;
+
+    // Analyze for breaking changes
+    let analysis = analyze_breaking_changes(&diff);
+    if !analysis.is_safe() {
+        eprintln!("WARNING: {} breaking change(s) detected:", analysis.len());
+        for change in analysis.iter() {
+            eprintln!("  [{}] {}", change.mitigation.as_str(), change.description);
+        }
+        eprintln!();
+    }
 
     // Create migration plan
     let plan = MigrationPlan::from_diff(&diff);
