@@ -59,21 +59,68 @@ cargo run -- --help
 
 ```
 src/
-├── lib.rs              # Library root (exports cli module)
+├── lib.rs                  # Library root (exports cli and db modules)
 ├── bin/
-│   └── main.rs         # Binary entry point
-└── cli/
-    ├── mod.rs          # CLI command definitions using clap
-    └── colors.rs       # Color output handling (Auto/Always/Never)
+│   └── main.rs             # Binary entry point
+├── cli/
+│   ├── mod.rs              # CLI command definitions using clap
+│   └── colors.rs           # Color output handling (Auto/Always/Never)
+└── db/
+    ├── mod.rs              # Database module root, connection handling
+    ├── schema.rs           # Core schema primitives (Oid, name types)
+    ├── model/              # Domain model for PostgreSQL schema representation
+    │   ├── mod.rs          # Re-exports main types
+    │   ├── column.rs       # Column definitions (type, default, identity, generated)
+    │   ├── constraint.rs   # Constraints (PK, FK, unique, check, exclusion)
+    │   ├── index.rs        # Index definitions with columns, sort order, predicates
+    │   ├── namespace.rs    # Schema/namespace with tables, views, sequences, enums
+    │   ├── table.rs        # Table definitions aggregating columns/constraints/indexes
+    │   └── types.rs        # Shared types (expressions, type info, qualified names)
+    ├── query/              # PostgreSQL catalog query module (sans-I/O design)
+    │   ├── mod.rs          # Re-exports main types
+    │   ├── catalog.rs      # Catalog trait abstracting database queries
+    │   ├── postgres.rs     # Real implementation using tokio-postgres
+    │   ├── fake.rs         # Test double for unit testing without DB
+    │   ├── loader.rs       # Pure business logic for loading schema
+    │   ├── sql.rs          # SQL query definitions for catalog queries
+    │   └── error.rs        # Query error types
+    └── diff/               # Schema comparison and diff generation
+        ├── mod.rs          # Re-exports main types
+        ├── compare.rs      # Entry point for comparing namespaces
+        ├── schema_diff.rs  # Diff types for each schema object
+        ├── similarity.rs   # Similarity scoring for rename detection
+        ├── types.rs        # Core diff types (Diff, DiffConfig, PotentialRename)
+        └── tests.rs        # Comprehensive diff tests
 ```
 
 ## Architecture
 
+### Core Design Patterns
+
+- **Sans-I/O Pattern**: The `db::query` module separates I/O from business logic:
+  - `Catalog` trait abstracts database queries
+  - `PostgresCatalog` implements real database access
+  - `FakeCatalog` provides a test double for unit testing without a database
+  - `load_namespace` contains pure business logic that works with any `Catalog`
+
+- **Domain Model**: The `db::model` module provides a complete in-memory representation of PostgreSQL schemas that is:
+  - **Serializable**: Can be saved/loaded for migration state tracking
+  - **Comparable**: Can diff two schemas to detect changes
+  - **Complete**: Captures enough detail to regenerate DDL
+
+- **Schema Diffing**: The `db::diff` module compares schemas to identify:
+  - Added, removed, and modified objects
+  - Potential renames (detected by structural similarity scoring)
+
+### Key Dependencies
+
 - **CLI Framework**: Uses `clap` with derive macros for argument parsing
 - **Async Runtime**: `tokio` with full features
+- **Database**: `tokio-postgres` with `rustls` TLS support
 - **Error Handling**: `miette` for user-facing diagnostics, `thiserror` for error type definitions
 - **Logging**: `tracing` with `tracing-subscriber` (supports text and JSON formats)
 - **Serialization**: `serde` for data serialization
+- **Type Safety**: `nutype` for newtype wrappers, `bon` for builder patterns
 
 ## Code Style & Conventions
 
@@ -134,45 +181,22 @@ PostgreSQL supports table partitioning (range, list, hash) for managing large ta
 
 ### Advanced Similarity Scoring for Rename Detection
 
-The current rename detection uses basic structural similarity (column name overlap, type matches). More sophisticated algorithms could improve accuracy.
+**Status: Implemented** in `src/db/diff/similarity.rs`
 
-**Potential enhancements:**
+The rename detection system now includes configurable weighted similarity scoring via `SimilarityConfig`:
 
-1. **Weighted column matching**: Consider column importance:
-   - Primary key columns should weigh more heavily
-   - Columns referenced by foreign keys are more significant
-   - Columns with unique constraints indicate structural importance
+- **Weighted column matching**: PK and FK columns receive bonus multipliers
+- **Constraint similarity**: Compares PK, FK, and unique constraint structures
+- **Index structure comparison**: Similar index definitions contribute to similarity score
+- **Name similarity heuristics**: Levenshtein distance for detecting common prefixes/suffixes
 
-2. **Constraint graph analysis**: Tables with similar foreign key relationships to other tables are more likely to be renames:
-   - If `users` references `accounts` and a new table `members` also references `accounts` with similar FK structure, that's a strong signal
+**Potential future enhancements:**
 
-3. **Index structure comparison**: Similar index definitions (same columns, same method) indicate structural similarity beyond just columns.
+1. **Constraint graph analysis**: Tables with similar FK relationships to other tables could strengthen rename detection.
 
-4. **Historical tracking**: Store previous schema snapshots to detect rename patterns over time (e.g., if a table was renamed before, similar patterns might indicate another rename).
+2. **Historical tracking**: Store previous schema snapshots to detect rename patterns over time.
 
-5. **Name similarity heuristics**: Use string similarity metrics (Levenshtein distance, common prefixes/suffixes) as a tie-breaker:
-   - `user_accounts` → `accounts` (common suffix)
-   - `tbl_users` → `users` (common base name)
-
-6. **Machine learning approach**: Train a model on known rename operations to predict renames based on structural features.
-
-**Configuration options to add:**
-```rust
-pub struct RenameDetectionConfig {
-    /// Minimum structural similarity (0.0-1.0)
-    pub similarity_threshold: f64,
-    /// Weight for column name overlap
-    pub column_name_weight: f64,
-    /// Weight for type matches
-    pub type_match_weight: f64,
-    /// Weight for constraint similarity
-    pub constraint_weight: f64,
-    /// Weight for name similarity
-    pub name_similarity_weight: f64,
-    /// Whether to consider position when matching columns
-    pub consider_position: bool,
-}
-```
+3. **Machine learning approach**: Train a model on known rename operations to predict renames based on structural features.
 
 ### Foreign Tables and Foreign Data Wrappers
 
