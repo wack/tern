@@ -3,10 +3,29 @@
 //! This module provides the ability to:
 //!
 //! - **Apply operations to schemas**: Transform a `Namespace` by applying `Operation`s
+//! - **Build schemas programmatically**: Ergonomic builders for test schema construction
 //! - **Track migration history**: Record which migrations have been applied (future)
 //! - **Reconstruct schema state**: Build schema state at any point in history (future)
 //!
-//! # Core Capability: Operation Application
+//! # Schema Construction with Builders
+//!
+//! The [`builder`] module provides ergonomic builders for constructing schemas:
+//!
+//! ```ignore
+//! use tern::db::history::builder::NamespaceBuilder;
+//!
+//! let schema = NamespaceBuilder::new("public")
+//!     .table("users", |t| {
+//!         t.column_with("id", "integer", |c| c.not_null().identity_always())
+//!          .column_with("email", "text", |c| c.not_null())
+//!          .primary_key(["id"])
+//!          .unique(["email"])
+//!     })
+//!     .enum_type("status", ["pending", "active"])
+//!     .build();
+//! ```
+//!
+//! # Operation Application
 //!
 //! The `Namespace::apply()` method is the inverse of the diff pipeline:
 //!
@@ -27,17 +46,25 @@
 //! # Example: Snapshot Testing
 //!
 //! ```ignore
-//! use tern::db::model::Namespace;
+//! use tern::db::history::builder::NamespaceBuilder;
 //! use tern::db::diff::diff_namespaces;
 //! use tern::db::migrate::{MigrationPlan, PostgresRenderer};
 //!
-//! // Define source schema (e.g., with int4 column)
-//! let source = Namespace::empty("public");
-//! // ... add table with integer column
+//! // Define source schema
+//! let source = NamespaceBuilder::new("public")
+//!     .table("users", |t| {
+//!         t.column_with("id", "integer", |c| c.not_null())
+//!          .column_with("age", "integer", |c| c.not_null())
+//!     })
+//!     .build();
 //!
-//! // Define target schema (e.g., with int8 column)
-//! let target = Namespace::empty("public");
-//! // ... add table with bigint column
+//! // Define target schema (widened column type)
+//! let target = NamespaceBuilder::new("public")
+//!     .table("users", |t| {
+//!         t.column_with("id", "integer", |c| c.not_null())
+//!          .column_with("age", "bigint", |c| c.not_null())  // int4 -> int8
+//!     })
+//!     .build();
 //!
 //! // Generate migration
 //! let diff = diff_namespaces(&source, &target);
@@ -46,11 +73,6 @@
 //!
 //! // Snapshot test the SQL
 //! insta::assert_snapshot!(script.to_sql());
-//!
-//! // Verify roundtrip: applying the operations should produce the target
-//! let operations = plan.operations();
-//! let result = source.apply(operations)?;
-//! assert_eq!(diff_namespaces(&result, &target).is_empty(), true);
 //! ```
 //!
 //! # Future: Migration History Tracking
@@ -65,6 +87,7 @@
 //! reconstruction.
 
 mod apply;
+pub mod builder;
 mod error;
 
 pub use apply::OidGenerator;
