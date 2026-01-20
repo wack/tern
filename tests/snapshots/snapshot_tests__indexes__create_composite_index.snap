@@ -1,0 +1,6 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Create index events_user_id_created_at_idx on public.events
+CREATE INDEX events_user_id_created_at_idx ON public.events (user_id, created_at);

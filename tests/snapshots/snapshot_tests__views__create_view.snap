@@ -1,0 +1,6 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Create view public.public_users
+CREATE VIEW public.public_users AS SELECT id, name, email FROM users;

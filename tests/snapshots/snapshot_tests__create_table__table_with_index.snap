@@ -1,0 +1,17 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Create table public.users
+CREATE TABLE public.users (
+    id integer NOT NULL,
+    email text,
+    created_at timestamp with time zone,
+    CONSTRAINT users_pkey PRIMARY KEY (id)
+);
+
+-- Create index users_email_idx on public.users
+CREATE INDEX users_email_idx ON public.users (email);
+
+-- Create index users_created_at_idx on public.users
+CREATE INDEX users_created_at_idx ON public.users (created_at);

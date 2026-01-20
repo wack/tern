@@ -1,0 +1,6 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Add constraint users_pkey on public.users
+ALTER TABLE public.users ADD CONSTRAINT users_pkey PRIMARY KEY (id);

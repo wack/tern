@@ -1,0 +1,12 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Add column public.users.created_at
+ALTER TABLE public.users ADD COLUMNcreated_at timestamp with time zone;
+
+-- Add column public.users.first_name
+ALTER TABLE public.users ADD COLUMNfirst_name text;
+
+-- Add column public.users.last_name
+ALTER TABLE public.users ADD COLUMNlast_name text;

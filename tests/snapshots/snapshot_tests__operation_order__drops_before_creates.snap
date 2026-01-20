@@ -1,0 +1,5 @@
+---
+source: tests/snapshot_tests.rs
+expression: "get_operation_descriptions(&source, &target)"
+---
+- Rename table public.old_table to new_table

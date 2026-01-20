@@ -1,0 +1,6 @@
+---
+source: tests/snapshot_tests.rs
+expression: "script.to_sql_with_options(SqlOptions::without_transaction())"
+---
+-- Rename table public.old_users to new_users
+ALTER TABLE public.old_users RENAME TO new_users;

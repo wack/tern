@@ -1,0 +1,21 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Rename column public.users.name to display_name
+ALTER TABLE public.users RENAME COLUMN name TO display_name;
+
+-- Add column public.users.updated_at
+ALTER TABLE public.users ADD COLUMNupdated_at timestamp with time zone DEFAULT now();
+
+-- Add column public.users.verified
+ALTER TABLE public.users ADD COLUMNverified boolean NOT NULL DEFAULT false;
+
+-- Create index users_display_name_idx on public.users
+CREATE INDEX users_display_name_idx ON public.users (display_name);
+
+-- Add constraint users_email_key on public.users
+ALTER TABLE public.users ADD CONSTRAINT users_email_key UNIQUE (email);
+
+-- Alter column public.users.email
+ALTER TABLE public.users ALTER COLUMN email SET NOT NULL;

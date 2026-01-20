@@ -1,0 +1,6 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Create index users_email_idx on public.users
+CREATE INDEX users_email_idx ON public.users (email);

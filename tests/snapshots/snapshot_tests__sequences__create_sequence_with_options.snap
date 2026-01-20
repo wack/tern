@@ -1,0 +1,6 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Create sequence public.order_number_seq
+CREATE SEQUENCE public.order_number_seq AS bigint START WITH 1000 INCREMENT BY 1 MINVALUE 1000 MAXVALUE 999999 CACHE 1 NO CYCLE;

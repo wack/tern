@@ -1,0 +1,6 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Drop column public.users.deprecated_field
+ALTER TABLE public.users DROP COLUMN deprecated_field;

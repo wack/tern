@@ -1,0 +1,14 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Create enum type public.user_status
+CREATE TYPE public.user_status AS ENUM ('pending', 'active', 'suspended');
+
+-- Create table public.users
+CREATE TABLE public.users (
+    id integer NOT NULL,
+    name text,
+    status user_status DEFAULT 'pending',
+    CONSTRAINT users_pkey PRIMARY KEY (id)
+);

@@ -1,0 +1,6 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Create enum type public.status
+CREATE TYPE public.status AS ENUM ('pending', 'active', 'archived');

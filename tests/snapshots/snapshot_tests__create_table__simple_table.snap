@@ -1,0 +1,10 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Create table public.users
+CREATE TABLE public.users (
+    id integer,
+    name text,
+    email text
+);

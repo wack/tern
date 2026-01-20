@@ -1,0 +1,7 @@
+---
+source: tests/snapshot_tests.rs
+expression: "get_operation_descriptions(&source, &target)"
+---
+- Create table public.parents
+- Create table public.children
+- Add constraint children_parent_id_fkey on public.children

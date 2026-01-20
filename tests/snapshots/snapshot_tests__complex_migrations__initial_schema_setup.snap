@@ -1,0 +1,34 @@
+---
+source: tests/snapshot_tests.rs
+expression: "generate_migration_sql(&source, &target)"
+---
+-- Create enum type public.user_role
+CREATE TYPE public.user_role AS ENUM ('admin', 'editor', 'viewer');
+
+-- Create table public.users
+CREATE TABLE public.users (
+    id integer NOT NULL GENERATED ALWAYS AS IDENTITY,
+    email text NOT NULL,
+    name text NOT NULL,
+    role user_role DEFAULT 'viewer',
+    created_at timestamp with time zone NOT NULL DEFAULT now(),
+    CONSTRAINT users_pkey PRIMARY KEY (id),
+    CONSTRAINT users_email_key UNIQUE (email)
+);
+
+-- Create table public.posts
+CREATE TABLE public.posts (
+    id integer NOT NULL GENERATED ALWAYS AS IDENTITY,
+    author_id integer NOT NULL,
+    title text NOT NULL,
+    content text,
+    published boolean NOT NULL DEFAULT false,
+    created_at timestamp with time zone NOT NULL DEFAULT now(),
+    CONSTRAINT posts_pkey PRIMARY KEY (id)
+);
+
+-- Create index posts_author_id_idx on public.posts
+CREATE INDEX posts_author_id_idx ON public.posts (author_id);
+
+-- Add constraint posts_author_id_fkey on public.posts
+ALTER TABLE public.posts ADD CONSTRAINT posts_author_id_fkey FOREIGN KEY (author_id) REFERENCES public.users (id);

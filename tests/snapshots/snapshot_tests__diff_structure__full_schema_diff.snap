@@ -1,0 +1,16 @@
+---
+source: tests/snapshot_tests.rs
+expression: "summarize_diff(&source, &target)"
+---
+tables_added: []
+tables_removed: []
+tables_modified:
+  - modified_table
+enums_added:
+  - new_enum
+enums_removed:
+  - old_enum
+sequences_added:
+  - new_seq
+views_added: []
+views_removed: []
