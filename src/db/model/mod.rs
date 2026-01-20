@@ -69,7 +69,7 @@ pub use constraint::{
     ForeignKeyConstraint, PrimaryKeyConstraint, UniqueConstraint,
 };
 pub use index::{Index, IndexColumn, NullsOrder, SortOrder};
-pub use namespace::{EnumType, Namespace, Sequence, View};
+pub use namespace::{EMPTY_NAMESPACE_OID, EnumType, Namespace, Sequence, View};
 pub use table::{Table, TableKind};
 pub use types::{
     Comment, ForeignKeyAction, IndexMethod, QualifiedCollationName, QualifiedName,

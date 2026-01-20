@@ -7,6 +7,12 @@ use crate::db::schema::{Oid, SchemaName, SequenceName, TableName, TypeName};
 use super::table::Table;
 use super::types::{Comment, SqlExpr, TypeInfo};
 
+/// OID used for empty namespaces created for diffing purposes.
+///
+/// This is a sentinel value that doesn't correspond to any real PostgreSQL OID.
+/// OID 0 is reserved and never used for real objects in PostgreSQL.
+pub const EMPTY_NAMESPACE_OID: u32 = 0;
+
 /// A database schema (namespace) containing tables and other objects.
 ///
 /// This is the top-level container for all objects within a PostgreSQL schema.
@@ -26,6 +32,43 @@ pub struct Namespace {
     pub enums: Vec<EnumType>,
     /// Comment on this schema, if any.
     pub comment: Option<Comment>,
+}
+
+impl Namespace {
+    /// Creates an empty namespace with no objects.
+    ///
+    /// This is useful for initializing a new project by diffing the current
+    /// database state against an empty schema. The diff result shows all
+    /// objects that need to be created.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The schema name (e.g., "public")
+    ///
+    /// # Panics
+    ///
+    /// Panics if the name is empty.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use tern::db::model::Namespace;
+    ///
+    /// let empty = Namespace::empty("public");
+    /// assert!(empty.tables.is_empty());
+    /// assert!(empty.views.is_empty());
+    /// ```
+    pub fn empty(name: &str) -> Self {
+        Self {
+            oid: Oid::new(EMPTY_NAMESPACE_OID),
+            name: SchemaName::try_new(name.to_string()).expect("schema name must not be empty"),
+            tables: vec![],
+            views: vec![],
+            sequences: vec![],
+            enums: vec![],
+            comment: None,
+        }
+    }
 }
 
 /// A view definition.
