@@ -333,10 +333,14 @@ mod alter_column {
     #[test]
     fn change_type() {
         let source = NamespaceBuilder::new("public")
-            .table("users", |t| t.column("id", "integer").column("age", "integer"))
+            .table("users", |t| {
+                t.column("id", "integer").column("age", "integer")
+            })
             .build();
         let target = NamespaceBuilder::new("public")
-            .table("users", |t| t.column("id", "integer").column("age", "bigint"))
+            .table("users", |t| {
+                t.column("id", "integer").column("age", "bigint")
+            })
             .build();
 
         assert_snapshot!(generate_migration_sql(&source, &target));
@@ -345,7 +349,9 @@ mod alter_column {
     #[test]
     fn add_not_null() {
         let source = NamespaceBuilder::new("public")
-            .table("users", |t| t.column("id", "integer").column("name", "text"))
+            .table("users", |t| {
+                t.column("id", "integer").column("name", "text")
+            })
             .build();
         let target = NamespaceBuilder::new("public")
             .table("users", |t| {
@@ -366,7 +372,9 @@ mod alter_column {
             })
             .build();
         let target = NamespaceBuilder::new("public")
-            .table("users", |t| t.column("id", "integer").column("name", "text"))
+            .table("users", |t| {
+                t.column("id", "integer").column("name", "text")
+            })
             .build();
 
         assert_snapshot!(generate_migration_sql(&source, &target));
@@ -435,7 +443,9 @@ mod add_constraint {
     #[test]
     fn add_primary_key() {
         let source = NamespaceBuilder::new("public")
-            .table("users", |t| t.column_with("id", "integer", |c| c.not_null()))
+            .table("users", |t| {
+                t.column_with("id", "integer", |c| c.not_null())
+            })
             .build();
         let target = NamespaceBuilder::new("public")
             .table("users", |t| {
@@ -450,7 +460,9 @@ mod add_constraint {
     #[test]
     fn add_unique_constraint() {
         let source = NamespaceBuilder::new("public")
-            .table("users", |t| t.column("id", "integer").column("email", "text"))
+            .table("users", |t| {
+                t.column("id", "integer").column("email", "text")
+            })
             .build();
         let target = NamespaceBuilder::new("public")
             .table("users", |t| {
@@ -466,7 +478,9 @@ mod add_constraint {
     #[test]
     fn add_check_constraint() {
         let source = NamespaceBuilder::new("public")
-            .table("products", |t| t.column("id", "integer").column("price", "numeric"))
+            .table("products", |t| {
+                t.column("id", "integer").column("price", "numeric")
+            })
             .build();
         let target = NamespaceBuilder::new("public")
             .table("products", |t| {
@@ -493,7 +507,9 @@ mod drop_constraint {
             })
             .build();
         let target = NamespaceBuilder::new("public")
-            .table("users", |t| t.column("id", "integer").column("email", "text"))
+            .table("users", |t| {
+                t.column("id", "integer").column("email", "text")
+            })
             .build();
 
         assert_snapshot!(generate_migration_sql(&source, &target));
@@ -509,7 +525,9 @@ mod drop_constraint {
             })
             .build();
         let target = NamespaceBuilder::new("public")
-            .table("products", |t| t.column("id", "integer").column("price", "numeric"))
+            .table("products", |t| {
+                t.column("id", "integer").column("price", "numeric")
+            })
             .build();
 
         assert_snapshot!(generate_migration_sql(&source, &target));
@@ -593,7 +611,9 @@ mod indexes {
     #[test]
     fn create_index() {
         let source = NamespaceBuilder::new("public")
-            .table("users", |t| t.column("id", "integer").column("email", "text"))
+            .table("users", |t| {
+                t.column("id", "integer").column("email", "text")
+            })
             .build();
         let target = NamespaceBuilder::new("public")
             .table("users", |t| {
@@ -609,7 +629,9 @@ mod indexes {
     #[test]
     fn create_unique_index() {
         let source = NamespaceBuilder::new("public")
-            .table("users", |t| t.column("id", "integer").column("email", "text"))
+            .table("users", |t| {
+                t.column("id", "integer").column("email", "text")
+            })
             .build();
         let target = NamespaceBuilder::new("public")
             .table("users", |t| {
@@ -653,7 +675,9 @@ mod indexes {
             })
             .build();
         let target = NamespaceBuilder::new("public")
-            .table("users", |t| t.column("id", "integer").column("email", "text"))
+            .table("users", |t| {
+                t.column("id", "integer").column("email", "text")
+            })
             .build();
 
         assert_snapshot!(generate_migration_sql(&source, &target));
@@ -747,9 +771,7 @@ mod sequences {
 
     #[test]
     fn drop_sequence() {
-        let source = NamespaceBuilder::new("public")
-            .sequence("old_seq")
-            .build();
+        let source = NamespaceBuilder::new("public").sequence("old_seq").build();
         let target = NamespaceBuilder::new("public").build();
 
         assert_snapshot!(generate_migration_sql(&source, &target));
@@ -789,11 +811,15 @@ mod views {
     #[test]
     fn drop_view() {
         let source = NamespaceBuilder::new("public")
-            .table("users", |t| t.column("id", "integer").column("name", "text"))
+            .table("users", |t| {
+                t.column("id", "integer").column("name", "text")
+            })
             .view("user_names", "SELECT id, name FROM users")
             .build();
         let target = NamespaceBuilder::new("public")
-            .table("users", |t| t.column("id", "integer").column("name", "text"))
+            .table("users", |t| {
+                t.column("id", "integer").column("name", "text")
+            })
             .build();
 
         assert_snapshot!(generate_migration_sql(&source, &target));
@@ -839,7 +865,9 @@ mod complex_migrations {
                     .column_with("email", "text", |c| c.not_null())
                     .column_with("name", "text", |c| c.not_null())
                     .column_with("role", "user_role", |c| c.default("'viewer'"))
-                    .column_with("created_at", "timestamptz", |c| c.not_null().default("now()"))
+                    .column_with("created_at", "timestamptz", |c| {
+                        c.not_null().default("now()")
+                    })
                     .primary_key(["id"])
                     .unique(["email"])
             })
@@ -849,7 +877,9 @@ mod complex_migrations {
                     .column_with("title", "text", |c| c.not_null())
                     .column("content", "text")
                     .column_with("published", "boolean", |c| c.not_null().default("false"))
-                    .column_with("created_at", "timestamptz", |c| c.not_null().default("now()"))
+                    .column_with("created_at", "timestamptz", |c| {
+                        c.not_null().default("now()")
+                    })
                     .primary_key(["id"])
                     .foreign_key(["author_id"], "users", ["id"])
                     .index(["author_id"])
@@ -889,7 +919,9 @@ mod complex_migrations {
                     .column_with("post_id", "integer", |c| c.not_null())
                     .column_with("author_id", "integer", |c| c.not_null())
                     .column_with("content", "text", |c| c.not_null())
-                    .column_with("created_at", "timestamptz", |c| c.not_null().default("now()"))
+                    .column_with("created_at", "timestamptz", |c| {
+                        c.not_null().default("now()")
+                    })
                     .primary_key(["id"])
                     .foreign_key(["post_id"], "posts", ["id"])
                     .foreign_key(["author_id"], "users", ["id"])
@@ -1047,7 +1079,9 @@ mod round_trip {
     #[test]
     fn add_index() {
         let source = NamespaceBuilder::new("public")
-            .table("users", |t| t.column("id", "integer").column("email", "text"))
+            .table("users", |t| {
+                t.column("id", "integer").column("email", "text")
+            })
             .build();
         let target = NamespaceBuilder::new("public")
             .table("users", |t| {
@@ -1134,7 +1168,7 @@ mod diff_structure {
                 .tables
                 .removed
                 .iter()
-                .map(|t| t.as_ref().to_string())  // removed items are just keys (TableName)
+                .map(|t| t.as_ref().to_string()) // removed items are just keys (TableName)
                 .collect(),
             tables_modified: diff
                 .tables
@@ -1152,7 +1186,7 @@ mod diff_structure {
                 .enums
                 .removed
                 .iter()
-                .map(|e| e.as_ref().to_string())  // removed items are just keys (TypeName)
+                .map(|e| e.as_ref().to_string()) // removed items are just keys (TypeName)
                 .collect(),
             sequences_added: diff
                 .sequences
@@ -1170,7 +1204,7 @@ mod diff_structure {
                 .views
                 .removed
                 .iter()
-                .map(|v| v.as_ref().to_string())  // removed items are just keys (TableName)
+                .map(|v| v.as_ref().to_string()) // removed items are just keys (TableName)
                 .collect(),
         }
     }
@@ -1212,7 +1246,11 @@ mod operation_order {
         let plan = MigrationPlan::from_diff(&diff);
         let renderer = PostgresRenderer::new(RenderConfig::default());
         let script = plan.render(&renderer);
-        script.descriptions().iter().map(|s| s.to_string()).collect()
+        script
+            .descriptions()
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
     }
 
     #[test]
@@ -1232,7 +1270,9 @@ mod operation_order {
         let source = NamespaceBuilder::new("public").build();
         let target = NamespaceBuilder::new("public")
             .enum_type("status", ["a", "b"])
-            .table("items", |t| t.column("id", "integer").column("status", "status"))
+            .table("items", |t| {
+                t.column("id", "integer").column("status", "status")
+            })
             .build();
 
         assert_yaml_snapshot!(get_operation_descriptions(&source, &target));

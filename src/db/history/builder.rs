@@ -351,7 +351,10 @@ impl TableBuilder {
 
         let constraint = Constraint {
             name: ConstraintName::try_new(pk_name).unwrap(),
-            kind: ConstraintKind::PrimaryKey(PrimaryKeyConstraint { columns, index_name }),
+            kind: ConstraintKind::PrimaryKey(PrimaryKeyConstraint {
+                columns,
+                index_name,
+            }),
             comment: None,
         };
         self.constraints.push(constraint);
@@ -439,11 +442,7 @@ impl TableBuilder {
             .collect();
 
         let col_names: Vec<&str> = columns.iter().map(|c| c.as_ref()).collect();
-        let fk_name = format!(
-            "{}_{}_fkey",
-            self.name.as_ref(),
-            col_names.join("_")
-        );
+        let fk_name = format!("{}_{}_fkey", self.name.as_ref(), col_names.join("_"));
 
         let constraint = Constraint {
             name: ConstraintName::try_new(fk_name).unwrap(),
@@ -492,11 +491,7 @@ impl TableBuilder {
             .collect();
 
         let col_names: Vec<&str> = columns.iter().map(|c| c.as_ref()).collect();
-        let fk_name = format!(
-            "{}_{}_fkey",
-            self.name.as_ref(),
-            col_names.join("_")
-        );
+        let fk_name = format!("{}_{}_fkey", self.name.as_ref(), col_names.join("_"));
 
         let constraint = Constraint {
             name: ConstraintName::try_new(fk_name).unwrap(),
@@ -1074,7 +1069,9 @@ mod tests {
         #[test]
         fn namespace_with_table() {
             let ns = NamespaceBuilder::new("public")
-                .table("users", |t| t.column("id", "integer").column("name", "text"))
+                .table("users", |t| {
+                    t.column("id", "integer").column("name", "text")
+                })
                 .build();
 
             assert_eq!(ns.tables.len(), 1);
@@ -1346,11 +1343,16 @@ mod tests {
         #[test]
         fn builds_complete_schema() {
             let schema = NamespaceBuilder::new("public")
-                .enum_type("order_status", ["pending", "processing", "shipped", "delivered"])
+                .enum_type(
+                    "order_status",
+                    ["pending", "processing", "shipped", "delivered"],
+                )
                 .table("users", |t| {
                     t.column_with("id", "integer", |c| c.not_null().identity_always())
                         .column_with("email", "text", |c| c.not_null())
-                        .column_with("created_at", "timestamptz", |c| c.not_null().default("now()"))
+                        .column_with("created_at", "timestamptz", |c| {
+                            c.not_null().default("now()")
+                        })
                         .primary_key(["id"])
                         .unique(["email"])
                 })
@@ -1372,7 +1374,10 @@ mod tests {
                         .index(["user_id"])
                         .index(["created_at"])
                 })
-                .view("pending_orders", "SELECT * FROM orders WHERE status = 'pending'")
+                .view(
+                    "pending_orders",
+                    "SELECT * FROM orders WHERE status = 'pending'",
+                )
                 .sequence("invoice_number_seq")
                 .build();
 

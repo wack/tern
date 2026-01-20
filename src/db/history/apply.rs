@@ -375,7 +375,11 @@ impl Namespace {
         Ok(())
     }
 
-    fn rename_sequence(&mut self, from: &SequenceName, to: &SequenceName) -> Result<(), ApplyError> {
+    fn rename_sequence(
+        &mut self,
+        from: &SequenceName,
+        to: &SequenceName,
+    ) -> Result<(), ApplyError> {
         let schema_str = self.schema_str();
         let sequence = self
             .sequences
@@ -966,8 +970,8 @@ impl OidGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::model::types::{SqlExpr, TypeInfo};
     use crate::db::model::TableKind;
+    use crate::db::model::types::{SqlExpr, TypeInfo};
 
     fn make_type_info(name: &str) -> TypeInfo {
         TypeInfo {
@@ -1046,7 +1050,8 @@ mod tests {
         #[test]
         fn drop_enum() {
             let mut ns = Namespace::empty("public");
-            ns.enums.push(make_enum("status", vec!["pending", "active"]));
+            ns.enums
+                .push(make_enum("status", vec!["pending", "active"]));
 
             let ops = vec![Operation::DropEnum {
                 schema: SchemaName::try_new("public".to_string()).unwrap(),
@@ -1060,7 +1065,8 @@ mod tests {
         #[test]
         fn rename_enum() {
             let mut ns = Namespace::empty("public");
-            ns.enums.push(make_enum("status", vec!["pending", "active"]));
+            ns.enums
+                .push(make_enum("status", vec!["pending", "active"]));
 
             let ops = vec![Operation::RenameEnum {
                 schema: SchemaName::try_new("public".to_string()).unwrap(),
@@ -1075,7 +1081,8 @@ mod tests {
         #[test]
         fn add_enum_value_at_end() {
             let mut ns = Namespace::empty("public");
-            ns.enums.push(make_enum("status", vec!["pending", "active"]));
+            ns.enums
+                .push(make_enum("status", vec!["pending", "active"]));
 
             let ops = vec![Operation::AddEnumValue {
                 schema: SchemaName::try_new("public".to_string()).unwrap(),
@@ -1094,7 +1101,8 @@ mod tests {
         #[test]
         fn add_enum_value_before() {
             let mut ns = Namespace::empty("public");
-            ns.enums.push(make_enum("status", vec!["pending", "active"]));
+            ns.enums
+                .push(make_enum("status", vec!["pending", "active"]));
 
             let ops = vec![Operation::AddEnumValue {
                 schema: SchemaName::try_new("public".to_string()).unwrap(),
@@ -1113,7 +1121,8 @@ mod tests {
         #[test]
         fn add_enum_value_after() {
             let mut ns = Namespace::empty("public");
-            ns.enums.push(make_enum("status", vec!["pending", "active"]));
+            ns.enums
+                .push(make_enum("status", vec!["pending", "active"]));
 
             let ops = vec![Operation::AddEnumValue {
                 schema: SchemaName::try_new("public".to_string()).unwrap(),
@@ -1238,8 +1247,10 @@ mod tests {
         #[test]
         fn replace_view() {
             let mut ns = Namespace::empty("public");
-            ns.views
-                .push(make_view("active_users", "SELECT * FROM users WHERE active"));
+            ns.views.push(make_view(
+                "active_users",
+                "SELECT * FROM users WHERE active",
+            ));
 
             let new_view = make_view("active_users", "SELECT id, name FROM users WHERE active");
 
@@ -1303,7 +1314,8 @@ mod tests {
         #[test]
         fn enum_value_not_found() {
             let mut ns = Namespace::empty("public");
-            ns.enums.push(make_enum("status", vec!["pending", "active"]));
+            ns.enums
+                .push(make_enum("status", vec!["pending", "active"]));
 
             let ops = vec![Operation::AddEnumValue {
                 schema: SchemaName::try_new("public".to_string()).unwrap(),
