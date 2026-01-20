@@ -1,4 +1,5 @@
 pub mod diff;
+pub mod migrate;
 pub mod model;
 pub mod query;
 pub mod schema;
