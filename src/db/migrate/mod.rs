@@ -35,7 +35,9 @@ mod collector;
 mod error;
 mod operation;
 mod ordering;
+mod plan;
 mod render;
+mod script;
 
 pub use collector::{CollectorConfig, OperationCollector};
 pub use error::MigrationError;
@@ -44,4 +46,6 @@ pub use operation::{
     IdentityChange, ObjectKind, Operation, OperationId, SequenceChanges, SetColumnType,
 };
 pub use ordering::topological_sort;
+pub use plan::{MigrationPlan, PlanConfig};
 pub use render::{IdentifierQuoting, PostgresRenderer, RenderConfig, RenderedOperation, Renderer};
+pub use script::{MigrationScript, SqlOptions};
