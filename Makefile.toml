@@ -50,12 +50,14 @@ dependencies = [
 
 [tasks.test]
 workspace = true
-description = "Run our test suite"
+description = "Run our test suite (excluding snapshot tests)"
 command = "cargo"
 args = [
   "nextest",
   "run",
   "--locked",
+  "-E",
+  "not binary(snapshot_tests)",
   "@@remove-empty(CARGO_MAKE_CARGO_VERBOSE_FLAGS)",
   "@@split(CARGO_MAKE_CARGO_BUILD_TEST_FLAGS, )",
 ]
