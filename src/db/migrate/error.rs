@@ -4,10 +4,11 @@ use miette::Diagnostic;
 use thiserror::Error;
 
 /// Errors that can occur during migration planning or execution.
-// Note: The `unused_assignments` warnings are false positives from thiserror's
-// field usage in error message formatting.
-#[allow(unused_assignments)]
+///
+/// Note: The `unused` warnings are false positives. These fields are used by
+/// thiserror's generated Display implementation to format error messages.
 #[derive(Debug, Error, Diagnostic)]
+#[allow(clippy::enum_variant_names)]
 pub enum MigrationError {
     /// A circular dependency was detected between tables.
     #[error("circular dependency detected involving table {schema}.{table}")]
@@ -42,7 +43,9 @@ pub enum MigrationError {
     #[error("cannot remove enum value '{value}' from {schema}.{enum_name}")]
     #[diagnostic(
         code(tern::migrate::enum_value_removal),
-        help("PostgreSQL does not support removing enum values. Consider creating a new enum type and migrating data.")
+        help(
+            "PostgreSQL does not support removing enum values. Consider creating a new enum type and migrating data."
+        )
     )]
     EnumValueRemoval {
         schema: String,
@@ -54,7 +57,9 @@ pub enum MigrationError {
     #[error("cannot reorder enum values in {schema}.{enum_name}")]
     #[diagnostic(
         code(tern::migrate::enum_reorder),
-        help("PostgreSQL does not support reordering enum values. Consider creating a new enum type and migrating data.")
+        help(
+            "PostgreSQL does not support reordering enum values. Consider creating a new enum type and migrating data."
+        )
     )]
     EnumValueReorder { schema: String, enum_name: String },
 }

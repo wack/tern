@@ -33,9 +33,11 @@
 
 mod error;
 mod operation;
+mod render;
 
 pub use error::MigrationError;
 pub use operation::{
     ColumnChanges, CommentTarget, DefaultChange, EnumValuePosition, GeneratedChange,
     IdentityChange, ObjectKind, Operation, OperationId, SequenceChanges, SetColumnType,
 };
+pub use render::{IdentifierQuoting, PostgresRenderer, RenderConfig, RenderedOperation, Renderer};

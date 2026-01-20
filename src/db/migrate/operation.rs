@@ -545,11 +545,7 @@ impl Operation {
                 )
             }
             Self::ReplaceView { schema, view } => {
-                format!(
-                    "Replace view {}.{}",
-                    schema.as_ref(),
-                    view.name.as_ref()
-                )
+                format!("Replace view {}.{}", schema.as_ref(), view.name.as_ref())
             }
             Self::RefreshMaterializedView {
                 schema,
@@ -782,10 +778,7 @@ pub enum CommentTarget {
         type_name: TypeName,
     },
     /// Comment on a view.
-    View {
-        schema: SchemaName,
-        view: TableName,
-    },
+    View { schema: SchemaName, view: TableName },
 }
 
 impl CommentTarget {
