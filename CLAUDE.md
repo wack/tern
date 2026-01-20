@@ -131,6 +131,15 @@ src/
 - Use `miette` for rich error diagnostics
 - Prefer async/await patterns with tokio
 
+## Agent Instructions
+
+**IMPORTANT**: Before completing any task, the agent must:
+
+1. **Always run the formatter**: Execute `cargo make format` to ensure all code adheres to Rust formatting standards
+2. **Always run the linter**: Execute `cargo make clippy` to check for linting warnings and ensure code quality
+
+These steps are mandatory and must be performed on all modifications before marking a task as complete. Do not skip these checks even if the changes appear minor.
+
 ## Testing
 
 - Tests are run using `cargo-nextest` (faster than default cargo test)
