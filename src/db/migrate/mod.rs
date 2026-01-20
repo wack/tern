@@ -31,10 +31,12 @@
 //! println!("{}", script.to_sql());
 //! ```
 
+mod collector;
 mod error;
 mod operation;
 mod render;
 
+pub use collector::{CollectorConfig, OperationCollector};
 pub use error::MigrationError;
 pub use operation::{
     ColumnChanges, CommentTarget, DefaultChange, EnumValuePosition, GeneratedChange,
