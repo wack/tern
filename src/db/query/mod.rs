@@ -110,5 +110,5 @@ mod sql;
 pub use catalog::Catalog;
 pub use error::QueryError;
 pub use fake::FakeCatalog;
-pub use loader::load_namespace;
+pub use loader::{diff_from_empty, diff_from_empty_with_config, load_namespace};
 pub use postgres::PostgresCatalog;

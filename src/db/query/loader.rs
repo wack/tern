@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 
+use crate::db::diff::{self, DiffConfig, NamespaceDiff};
 use crate::db::model::column::{Column, GeneratedColumn, GeneratedStorage, IdentityKind};
 use crate::db::model::constraint::{
     CheckConstraint, Constraint, ConstraintKind, ExclusionConstraint, ExclusionElement,
@@ -80,6 +81,88 @@ pub async fn load_namespace<C: Catalog>(
         enums,
         comment: ns_row.comment.map(Comment::new),
     })
+}
+
+/// Computes the diff between an empty schema and the current database schema.
+///
+/// This is useful for initializing a new project. The diff result shows all
+/// objects that exist in the database and would need to be created in a fresh
+/// database to match the current state.
+///
+/// When starting a new migration project, you can use this function to:
+/// 1. Discover all existing database objects
+/// 2. Generate an initial "baseline" migration
+/// 3. Understand what the current schema looks like
+///
+/// # Arguments
+///
+/// * `catalog` - A catalog implementation (real database or fake for testing)
+/// * `schema_name` - The name of the schema to compare (e.g., "public")
+///
+/// # Returns
+///
+/// Returns a `NamespaceDiff` where:
+/// - `added` contains all objects in the database (they're "added" relative to empty)
+/// - `removed` is empty (nothing to remove from an empty schema)
+/// - `modified` is empty (nothing to modify)
+/// - `potential_renames` is empty (no source objects to rename)
+///
+/// # Example
+///
+/// ```ignore
+/// use tern::db::connect;
+/// use tern::db::query::{diff_from_empty, PostgresCatalog};
+///
+/// let client = connect("postgres://localhost/mydb").await?;
+/// let catalog = PostgresCatalog::new(&client);
+/// let diff = diff_from_empty(&catalog, "public").await?;
+///
+/// println!("Tables to create: {}", diff.tables.added.len());
+/// for table in &diff.tables.added {
+///     println!("  - {} ({} columns)", table.name.as_ref(), table.columns.len());
+/// }
+/// ```
+pub async fn diff_from_empty<C: Catalog>(
+    catalog: &C,
+    schema_name: &str,
+) -> Result<NamespaceDiff, QueryError> {
+    diff_from_empty_with_config(catalog, schema_name, &DiffConfig::default()).await
+}
+
+/// Computes the diff between an empty schema and the current database schema
+/// with a custom diff configuration.
+///
+/// This is the configurable version of [`diff_from_empty`]. Since we're comparing
+/// against an empty schema, most configuration options (like rename detection
+/// threshold) won't have any effect, but this function is provided for consistency
+/// with the rest of the diff API.
+///
+/// # Arguments
+///
+/// * `catalog` - A catalog implementation (real database or fake for testing)
+/// * `schema_name` - The name of the schema to compare (e.g., "public")
+/// * `config` - The diff configuration to use
+///
+/// # Example
+///
+/// ```ignore
+/// use tern::db::connect;
+/// use tern::db::query::{diff_from_empty_with_config, PostgresCatalog};
+/// use tern::db::diff::DiffConfig;
+///
+/// let client = connect("postgres://localhost/mydb").await?;
+/// let catalog = PostgresCatalog::new(&client);
+/// let config = DiffConfig::no_rename_detection();
+/// let diff = diff_from_empty_with_config(&catalog, "public", &config).await?;
+/// ```
+pub async fn diff_from_empty_with_config<C: Catalog>(
+    catalog: &C,
+    schema_name: &str,
+    config: &DiffConfig,
+) -> Result<NamespaceDiff, QueryError> {
+    let current = load_namespace(catalog, schema_name).await?;
+    let empty = Namespace::empty(schema_name);
+    Ok(diff::diff_namespaces_with_config(&empty, &current, config))
 }
 
 /// Loads all tables in a namespace.
@@ -735,5 +818,367 @@ mod tests {
         assert_eq!(generated.expression.as_ref(), "(price * quantity)");
         assert_eq!(generated.storage, GeneratedStorage::Stored);
         assert!(col.default.is_none()); // default should be None for generated columns
+    }
+
+    // =========================================================================
+    // diff_from_empty tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn diff_from_empty_with_empty_database() {
+        let catalog = FakeCatalog::new().with_namespace(NamespaceRow {
+            oid: 100,
+            name: "public".to_string(),
+            comment: None,
+        });
+
+        let diff = diff_from_empty(&catalog, "public").await.unwrap();
+
+        // When the database is empty, the diff should show no changes
+        assert!(diff.is_empty());
+        assert!(diff.tables.added.is_empty());
+        assert!(diff.tables.removed.is_empty());
+        assert!(diff.tables.modified.is_empty());
+        assert!(diff.tables.potential_renames.is_empty());
+    }
+
+    #[tokio::test]
+    async fn diff_from_empty_shows_tables_as_added() {
+        let catalog = FakeCatalog::new()
+            .with_namespace(NamespaceRow {
+                oid: 100,
+                name: "public".to_string(),
+                comment: None,
+            })
+            .with_table(
+                100,
+                TableRow {
+                    oid: 200,
+                    name: "users".to_string(),
+                    relkind: 'r',
+                    comment: None,
+                },
+            )
+            .with_column(
+                200,
+                ColumnRow {
+                    position: 1,
+                    name: "id".to_string(),
+                    type_name: "int4".to_string(),
+                    type_schema: "pg_catalog".to_string(),
+                    formatted_type: "integer".to_string(),
+                    is_array: false,
+                    is_nullable: false,
+                    default_expr: None,
+                    generated_kind: None,
+                    identity_kind: None,
+                    collation_schema: "pg_catalog".to_string(),
+                    collation_name: "default".to_string(),
+                    comment: None,
+                },
+            )
+            .with_table(
+                100,
+                TableRow {
+                    oid: 201,
+                    name: "orders".to_string(),
+                    relkind: 'r',
+                    comment: None,
+                },
+            )
+            .with_column(
+                201,
+                ColumnRow {
+                    position: 1,
+                    name: "id".to_string(),
+                    type_name: "int4".to_string(),
+                    type_schema: "pg_catalog".to_string(),
+                    formatted_type: "integer".to_string(),
+                    is_array: false,
+                    is_nullable: false,
+                    default_expr: None,
+                    generated_kind: None,
+                    identity_kind: None,
+                    collation_schema: "pg_catalog".to_string(),
+                    collation_name: "default".to_string(),
+                    comment: None,
+                },
+            );
+
+        let diff = diff_from_empty(&catalog, "public").await.unwrap();
+
+        // Tables should appear as "added" (relative to empty schema)
+        assert!(!diff.is_empty());
+        assert_eq!(diff.tables.added.len(), 2);
+        assert!(diff.tables.removed.is_empty());
+        assert!(diff.tables.modified.is_empty());
+        assert!(diff.tables.potential_renames.is_empty());
+
+        // Verify the table details
+        let table_names: Vec<_> = diff.tables.added.iter().map(|t| t.name.as_ref()).collect();
+        assert!(table_names.contains(&"users"));
+        assert!(table_names.contains(&"orders"));
+    }
+
+    #[tokio::test]
+    async fn diff_from_empty_shows_views_as_added() {
+        use crate::db::query::catalog::ViewRow;
+
+        let catalog = FakeCatalog::new()
+            .with_namespace(NamespaceRow {
+                oid: 100,
+                name: "public".to_string(),
+                comment: None,
+            })
+            .with_view(
+                100,
+                ViewRow {
+                    oid: 300,
+                    name: "active_users".to_string(),
+                    is_materialized: false,
+                    definition: Some("SELECT * FROM users WHERE active".to_string()),
+                    comment: None,
+                },
+            );
+
+        let diff = diff_from_empty(&catalog, "public").await.unwrap();
+
+        assert!(!diff.is_empty());
+        assert_eq!(diff.views.added.len(), 1);
+        assert!(diff.views.removed.is_empty());
+        assert_eq!(diff.views.added[0].name.as_ref(), "active_users");
+        assert!(!diff.views.added[0].is_materialized);
+    }
+
+    #[tokio::test]
+    async fn diff_from_empty_shows_sequences_as_added() {
+        use crate::db::query::catalog::SequenceRow;
+
+        let catalog = FakeCatalog::new()
+            .with_namespace(NamespaceRow {
+                oid: 100,
+                name: "public".to_string(),
+                comment: None,
+            })
+            .with_sequence(
+                100,
+                SequenceRow {
+                    oid: 400,
+                    name: "users_id_seq".to_string(),
+                    type_name: "int8".to_string(),
+                    type_schema: "pg_catalog".to_string(),
+                    formatted_type: "bigint".to_string(),
+                    start_value: 1,
+                    increment: 1,
+                    min_value: 1,
+                    max_value: i64::MAX,
+                    cache_size: 1,
+                    is_cyclic: false,
+                    comment: None,
+                },
+            );
+
+        let diff = diff_from_empty(&catalog, "public").await.unwrap();
+
+        assert!(!diff.is_empty());
+        assert_eq!(diff.sequences.added.len(), 1);
+        assert!(diff.sequences.removed.is_empty());
+        assert_eq!(diff.sequences.added[0].name.as_ref(), "users_id_seq");
+        assert_eq!(diff.sequences.added[0].increment, 1);
+    }
+
+    #[tokio::test]
+    async fn diff_from_empty_shows_enums_as_added() {
+        use crate::db::query::catalog::EnumRow;
+
+        let catalog = FakeCatalog::new()
+            .with_namespace(NamespaceRow {
+                oid: 100,
+                name: "public".to_string(),
+                comment: None,
+            })
+            .with_enum(
+                100,
+                EnumRow {
+                    oid: 500,
+                    name: "status".to_string(),
+                    values: vec![
+                        "pending".to_string(),
+                        "active".to_string(),
+                        "completed".to_string(),
+                    ],
+                    comment: None,
+                },
+            );
+
+        let diff = diff_from_empty(&catalog, "public").await.unwrap();
+
+        assert!(!diff.is_empty());
+        assert_eq!(diff.enums.added.len(), 1);
+        assert!(diff.enums.removed.is_empty());
+        assert_eq!(diff.enums.added[0].name.as_ref(), "status");
+        assert_eq!(diff.enums.added[0].values.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn diff_from_empty_with_complex_schema() {
+        use crate::db::query::catalog::{EnumRow, SequenceRow, ViewRow};
+
+        let catalog = FakeCatalog::new()
+            .with_namespace(NamespaceRow {
+                oid: 100,
+                name: "public".to_string(),
+                comment: Some("Main schema".to_string()),
+            })
+            // Table with columns
+            .with_table(
+                100,
+                TableRow {
+                    oid: 200,
+                    name: "users".to_string(),
+                    relkind: 'r',
+                    comment: Some("User accounts".to_string()),
+                },
+            )
+            .with_column(
+                200,
+                ColumnRow {
+                    position: 1,
+                    name: "id".to_string(),
+                    type_name: "int4".to_string(),
+                    type_schema: "pg_catalog".to_string(),
+                    formatted_type: "integer".to_string(),
+                    is_array: false,
+                    is_nullable: false,
+                    default_expr: None,
+                    generated_kind: None,
+                    identity_kind: None,
+                    collation_schema: "pg_catalog".to_string(),
+                    collation_name: "default".to_string(),
+                    comment: None,
+                },
+            )
+            .with_column(
+                200,
+                ColumnRow {
+                    position: 2,
+                    name: "email".to_string(),
+                    type_name: "text".to_string(),
+                    type_schema: "pg_catalog".to_string(),
+                    formatted_type: "text".to_string(),
+                    is_array: false,
+                    is_nullable: false,
+                    default_expr: None,
+                    generated_kind: None,
+                    identity_kind: None,
+                    collation_schema: "pg_catalog".to_string(),
+                    collation_name: "default".to_string(),
+                    comment: None,
+                },
+            )
+            // View
+            .with_view(
+                100,
+                ViewRow {
+                    oid: 300,
+                    name: "active_users".to_string(),
+                    is_materialized: false,
+                    definition: Some("SELECT * FROM users WHERE active".to_string()),
+                    comment: None,
+                },
+            )
+            // Sequence
+            .with_sequence(
+                100,
+                SequenceRow {
+                    oid: 400,
+                    name: "users_id_seq".to_string(),
+                    type_name: "int8".to_string(),
+                    type_schema: "pg_catalog".to_string(),
+                    formatted_type: "bigint".to_string(),
+                    start_value: 1,
+                    increment: 1,
+                    min_value: 1,
+                    max_value: i64::MAX,
+                    cache_size: 1,
+                    is_cyclic: false,
+                    comment: None,
+                },
+            )
+            // Enum
+            .with_enum(
+                100,
+                EnumRow {
+                    oid: 500,
+                    name: "user_status".to_string(),
+                    values: vec!["active".to_string(), "inactive".to_string()],
+                    comment: None,
+                },
+            );
+
+        let diff = diff_from_empty(&catalog, "public").await.unwrap();
+
+        // All objects should appear as added
+        assert!(!diff.is_empty());
+        assert_eq!(diff.tables.added.len(), 1);
+        assert_eq!(diff.views.added.len(), 1);
+        assert_eq!(diff.sequences.added.len(), 1);
+        assert_eq!(diff.enums.added.len(), 1);
+
+        // No removed, modified, or potential renames
+        assert!(diff.tables.removed.is_empty());
+        assert!(diff.tables.modified.is_empty());
+        assert!(diff.tables.potential_renames.is_empty());
+
+        // Verify the table has its columns
+        let users_table = &diff.tables.added[0];
+        assert_eq!(users_table.name.as_ref(), "users");
+        assert_eq!(users_table.columns.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn diff_from_empty_namespace_not_found() {
+        let catalog = FakeCatalog::new();
+        let result = diff_from_empty(&catalog, "nonexistent").await;
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            QueryError::NamespaceNotFound(_)
+        ));
+    }
+
+    // =========================================================================
+    // Namespace::empty tests
+    // =========================================================================
+
+    #[test]
+    fn namespace_empty_creates_valid_namespace() {
+        let ns = Namespace::empty("public");
+
+        assert_eq!(ns.oid, Oid::new(0)); // Uses EMPTY_NAMESPACE_OID
+        assert_eq!(ns.name.as_ref(), "public");
+        assert!(ns.tables.is_empty());
+        assert!(ns.views.is_empty());
+        assert!(ns.sequences.is_empty());
+        assert!(ns.enums.is_empty());
+        assert!(ns.comment.is_none());
+    }
+
+    #[test]
+    fn namespace_empty_works_with_different_schema_names() {
+        let ns1 = Namespace::empty("public");
+        let ns2 = Namespace::empty("myschema");
+        let ns3 = Namespace::empty("my_schema_123");
+
+        assert_eq!(ns1.name.as_ref(), "public");
+        assert_eq!(ns2.name.as_ref(), "myschema");
+        assert_eq!(ns3.name.as_ref(), "my_schema_123");
+    }
+
+    #[test]
+    #[should_panic(expected = "schema name must not be empty")]
+    fn namespace_empty_panics_on_empty_name() {
+        let _ = Namespace::empty("");
     }
 }
