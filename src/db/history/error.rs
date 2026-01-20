@@ -1,9 +1,18 @@
 //! Error types for schema history operations.
+//!
+//! Note: This module has `#[allow(unused_assignments)]` because thiserror's proc macros
+//! generate code that references struct fields in error message formatting, which the
+//! compiler cannot detect, leading to false positive "unused_assignments" warnings.
+
+#![allow(unused_assignments)]
 
 use miette::Diagnostic;
 use thiserror::Error;
 
 /// Errors that can occur when applying operations to a namespace.
+///
+/// Note: The fields in these variants are used by thiserror's generated Display and Diagnostic
+/// implementations to format error messages.
 #[derive(Debug, Error, Diagnostic)]
 pub enum ApplyError {
     /// The target table was not found in the namespace.
