@@ -461,7 +461,7 @@ impl<'a> OperationCollector<'a> {
 
         if let Some(ref identity_change) = modified.identity {
             changes.set_identity = Some(match &identity_change.target {
-                Some(kind) => IdentityChange::Add(kind.clone()),
+                Some(kind) => IdentityChange::Add(*kind),
                 None => IdentityChange::Drop,
             });
         }
@@ -665,10 +665,8 @@ impl<'a> OperationCollector<'a> {
 mod tests {
     use super::*;
     use crate::db::diff::Diff;
-    use crate::db::model::column::Column;
-    use crate::db::model::types::TypeInfo;
-    use crate::db::model::{EnumType, Sequence, Table, TableKind, View};
-    use crate::db::schema::{ColumnName, Oid, SequenceName, TableName, TypeName};
+    use crate::db::model::{EnumType, Table, TableKind};
+    use crate::db::schema::{Oid, TableName, TypeName};
 
     fn test_schema() -> SchemaName {
         SchemaName::try_new("public".to_string()).unwrap()

@@ -1,12 +1,18 @@
 //! Migration-specific error types.
+//!
+//! Note: This module has `#[allow(unused_assignments)]` because thiserror's proc macros
+//! generate code that references struct fields in error message formatting, which the
+//! compiler cannot detect, leading to false positive "unused_assignments" warnings.
+
+#![allow(unused_assignments)]
 
 use miette::Diagnostic;
 use thiserror::Error;
 
 /// Errors that can occur during migration planning or execution.
 ///
-/// Note: The `unused` warnings are false positives. These fields are used by
-/// thiserror's generated Display implementation to format error messages.
+/// Note: The fields in these variants are used by thiserror's generated Display and Diagnostic
+/// implementations to format error messages.
 #[derive(Debug, Error, Diagnostic)]
 #[allow(clippy::enum_variant_names)]
 pub enum MigrationError {

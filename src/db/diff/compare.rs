@@ -724,7 +724,7 @@ where
 
     // Sort results for deterministic output (HashSet iteration order is non-deterministic)
     only_in_source.sort();
-    only_in_target.sort_by(|a, b| key_fn(a).cmp(&key_fn(b)));
+    only_in_target.sort_by_key(|a| key_fn(a));
 
     Diff {
         added: only_in_target.into_iter().cloned().collect(),

@@ -221,15 +221,10 @@ fn sort_tables_by_fk_dependencies(operations: Vec<Operation>) -> Vec<Operation> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::model::column::Column;
     use crate::db::model::constraint::{Constraint, ForeignKeyConstraint};
-    use crate::db::model::types::{
-        ForeignKeyAction, QualifiedCollationName, QualifiedTableName, TypeInfo,
-    };
-    use crate::db::model::{EnumType, Sequence, Table, TableKind, View};
-    use crate::db::schema::{
-        CollationName, ColumnName, ConstraintName, Oid, SequenceName, TypeName,
-    };
+    use crate::db::model::types::{ForeignKeyAction, QualifiedTableName};
+    use crate::db::model::{EnumType, Table, TableKind};
+    use crate::db::schema::{ColumnName, ConstraintName, Oid, TableName, TypeName};
 
     fn test_schema() -> SchemaName {
         SchemaName::try_new("public".to_string()).unwrap()
