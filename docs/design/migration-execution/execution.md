@@ -227,6 +227,62 @@ if result.has_breaking_changes() {
 
 ---
 
+### Completed: CLI Integration (Phase 6)
+
+The CLI commands and handlers have been implemented in `src/cli/commands/`.
+
+#### Implemented Commands
+
+| Command | Location | Description |
+|---------|----------|-------------|
+| `init` | `src/cli/commands/init.rs` | Initialize new Tern projects with state backend (empty or from database) |
+| `status` | `src/cli/commands/status.rs` | Display current state backend information and schema summary |
+| `compile` | `src/cli/commands/compile.rs` | Generate migration source code by comparing state to live database |
+| `history` | `src/cli/commands/history.rs` | List migration history with formatted output |
+| `show` | `src/cli/commands/show.rs` | Display detailed migration information with SQL output option |
+| `record` | `src/cli/commands/record.rs` | Record migrations as applied without execution |
+| `inspect` | `src/cli/commands/inspect.rs` | Examine migration files (JSON or Rust source) |
+| `verify` | `src/cli/commands/verify.rs` | Check state backend matches database schema |
+| `verify-chain` | `src/cli/commands/verify.rs` | Validate migration chain integrity |
+
+#### Key Features
+
+- All commands support `--format` option (text/json/sql where applicable)
+- Rich output formatting for both human-readable and machine consumption
+- Comprehensive unit tests for each command handler
+- Proper error handling with helpful diagnostic messages
+- Commands use `--path` option to specify non-default state directory location
+
+#### CLI Usage Examples
+
+```bash
+# Initialize empty state backend
+tern init
+
+# Initialize from existing database
+tern init --from postgres://localhost/mydb
+
+# Check current status
+tern status --format json
+
+# Compile migration from database diff
+tern compile --database-url postgres://localhost/mydb --description "Add users table" --show-sql
+
+# View migration history
+tern history --limit 10
+
+# Show migration details
+tern show abc123 --format sql
+
+# Verify state matches database
+tern verify --database-url postgres://localhost/mydb
+
+# Verify migration chain integrity
+tern verify-chain
+```
+
+---
+
 ## Remaining Work
 
 ### Architecture Overview
@@ -974,8 +1030,8 @@ async-trait = "0.1"
 | | 4.4 | Implement host functions | DONE |
 | **5** | 5.1 | Implement `ExecutableBuilder` | DONE |
 | | 5.2 | Create high-level `compile_migration` API | DONE |
-| **6** | 6.1 | Add CLI commands | TODO |
-| | 6.2 | Implement command handlers | TODO |
+| **6** | 6.1 | Add CLI commands | DONE |
+| | 6.2 | Implement command handlers | DONE |
 | **7** | 7.1 | Integration tests for compilation | TODO |
 | | 7.2 | Integration tests for state reconstruction | TODO |
 
