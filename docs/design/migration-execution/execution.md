@@ -186,6 +186,47 @@ The standalone runner has been implemented in `crates/tern-migration-runner/` us
 
 ---
 
+### Completed: Executable Generation Pipeline (Phase 5)
+
+The executable generation infrastructure has been implemented in `src/db/compile/`.
+
+#### Implemented Components
+
+| Component | Location | Description |
+|-----------|----------|-------------|
+| `Target` | `src/db/compile/executable.rs` | Cross-compilation target enum (Native, Linux, macOS, Windows) |
+| `ExecutableBuilder` | `src/db/compile/executable.rs` | Builds standalone executables from Wasm components |
+| `BuildResult` | `src/db/compile/executable.rs` | Result containing output path, target, and component size |
+| `CompileOptions` | `src/db/compile/mod.rs` | Configuration for migration compilation |
+| `MigrationCompilationResult` | `src/db/compile/mod.rs` | Full compilation artifacts with migration record |
+| `compile_migration()` | `src/db/compile/mod.rs` | High-level API for compiling schema diffs |
+| `compile_and_extract_sql()` | `src/db/compile/mod.rs` | Helper for testing/validation |
+
+#### Key Features
+
+- **Target platforms**: Supports Native, x86_64-linux-gnu, x86_64-linux-musl, x86_64-macos, aarch64-macos, x86_64-windows
+- **High-level API**: `compile_migration()` handles the full pipeline from schema diff to compiled source
+- **Cross-compilation support**: Verifies target toolchain installation before building
+- **Error handling**: Extended `CompileError` with variants for executable compilation errors
+- **Comprehensive tests**: Unit tests for Target, ExecutableBuilder, CompileOptions, and compile_migration API
+
+#### Usage Example
+
+```rust
+use tern::db::compile::{compile_migration, CompileOptions, Target};
+
+// Compile a migration from schema diff
+let result = compile_migration(&source, &target, CompileOptions::new("Add email column"))?;
+
+println!("Migration ID: {}", result.migration_id());
+println!("Statements: {}", result.statement_count());
+if result.has_breaking_changes() {
+    println!("Warning: This migration has breaking changes!");
+}
+```
+
+---
+
 ## Remaining Work
 
 ### Architecture Overview
@@ -931,8 +972,8 @@ async-trait = "0.1"
 | | 4.2 | Implement CLI entry point | DONE |
 | | 4.3 | Implement Wasmtime runtime wrapper | DONE |
 | | 4.4 | Implement host functions | DONE |
-| **5** | 5.1 | Implement `ExecutableBuilder` | TODO |
-| | 5.2 | Create high-level `compile_migration` API | TODO |
+| **5** | 5.1 | Implement `ExecutableBuilder` | DONE |
+| | 5.2 | Create high-level `compile_migration` API | DONE |
 | **6** | 6.1 | Add CLI commands | TODO |
 | | 6.2 | Implement command handlers | TODO |
 | **7** | 7.1 | Integration tests for compilation | TODO |
