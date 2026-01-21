@@ -23,7 +23,7 @@ This document describes the design for compiling database migrations into standa
 
 ## Implementation Status
 
-### Completed: Migration State Backend
+### Completed: Migration State Backend (Phase 1)
 
 The core state backend infrastructure has been implemented in `src/db/state/`. This provides the foundation for tracking migration history and schema state.
 
@@ -39,6 +39,27 @@ The core state backend infrastructure has been implemented in `src/db/state/`. T
 | `LocalFileBackend` | `src/db/state/local.rs` | Filesystem implementation |
 | `StateError` | `src/db/state/error.rs` | Error types with miette diagnostics |
 | `InMemoryBackend` | `src/db/state/mod.rs` | Test double (in tests module) |
+| `init_from_database()` | `src/db/state/init.rs` | Initialize backend from existing database |
+| `init_empty()` | `src/db/state/init.rs` | Initialize backend with empty schema |
+| `verify_state()` | `src/db/state/init.rs` | Verify backend matches database |
+
+#### StateBackend Trait Methods
+
+| Method | Description |
+|--------|-------------|
+| `initialize()` | Create directory structure |
+| `is_initialized()` | Check if backend is set up |
+| `get_migration_index()` | Get ordered list of migration IDs |
+| `get_migration()` | Get specific migration by ID |
+| `get_all_migrations()` | Get all migrations in order |
+| `save_migration()` | Save a new migration |
+| `get_current_state_hash()` | Get hash of current schema state |
+| `get_current_state()` | Get full `Namespace` of current state |
+| `save_current_state()` | Store current schema state |
+| `record_migration()` | Atomically save migration and update state |
+| `get_state_at()` | Reconstruct state at any migration point |
+| `verify_chain()` | Verify migration chain integrity |
+| `get_migrations_since()` | Get migrations since a given state hash |
 
 #### Key Design Decisions Made
 
@@ -48,10 +69,13 @@ The core state backend infrastructure has been implemented in `src/db/state/`. T
 
 3. **Hex-encoded hashes in JSON**: Hashes are serialized as 64-character hex strings for human readability.
 
+4. **Checkpoint-based state reconstruction**: `get_state_at()` finds the nearest checkpoint migration and applies subsequent operations to reconstruct state at any point in history.
+
 #### Directory Structure
 
 ```
 .tern/
+├── state.json        # Current schema state (Namespace)
 └── migrations/
     ├── index.json    # Ordered list of migration IDs
     ├── 00001.json    # First migration (baseline)
@@ -801,10 +825,10 @@ serde_json = "1"
 
 | Phase | Task | Description | Status |
 |-------|------|-------------|--------|
-| **1** | 1.1 | Add `get_current_state()` to StateBackend | TODO |
-| | 1.2 | Implement `init_from_database()` | TODO |
-| | 1.3 | Implement `get_state_at()` for state reconstruction | TODO |
-| | 1.4 | Add `record_migration()` method | TODO |
+| **1** | 1.1 | Add `get_current_state()` to StateBackend | DONE |
+| | 1.2 | Implement `init_from_database()` | DONE |
+| | 1.3 | Implement `get_state_at()` for state reconstruction | DONE |
+| | 1.4 | Add `record_migration()` method | DONE |
 | **2** | 2.1 | Create `tern-migration-wit` crate | TODO |
 | | 2.2 | Create `tern-migration-guest` crate | TODO |
 | | 2.3 | Update workspace Cargo.toml | TODO |
