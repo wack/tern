@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "crates/tern-migration-wit", "crates/tern-migration-guest"]
+resolver = "3"
+
 [package]
 name = "tern"
 version = "0.1.0"
@@ -8,6 +12,9 @@ name = "tern"
 path = "src/bin/main.rs"
 
 [dependencies]
+# Workspace crates
+tern-migration-wit = { path = "crates/tern-migration-wit" }
+tern-migration-guest = { path = "crates/tern-migration-guest" }
 async-trait = "0.1.89"
 bon = "3.8.1"
 jiff = { version = "0.2.1", features = ["serde"] }
