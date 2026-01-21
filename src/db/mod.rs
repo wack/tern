@@ -4,6 +4,7 @@ pub mod migrate;
 pub mod model;
 pub mod query;
 pub mod schema;
+pub mod state;
 
 use rustls::ClientConfig;
 use tokio_postgres::Client;
