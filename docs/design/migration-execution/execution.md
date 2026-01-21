@@ -97,6 +97,95 @@ Hash stability tests are in place to detect any accidental changes to the hashin
 
 ---
 
+### Completed: WIT Definitions & Guest Bindings (Phase 2)
+
+The WebAssembly interface contract and guest bindings have been implemented in `crates/tern-migration-wit/` and `crates/tern-migration-guest/`.
+
+#### Implemented Components
+
+| Component | Location | Description |
+|-----------|----------|-------------|
+| WIT definitions | `crates/tern-migration-wit/wit/migration.wit` | Interface contract for migration components |
+| Guest bindings | `crates/tern-migration-guest/src/lib.rs` | wit-bindgen generated types and `define_migration!` macro |
+
+#### WIT Interface Features
+
+- `database` interface with `execute()` and `query()` functions
+- `log` interface with severity levels (debug, info, warn, error)
+- `migration` interface with `describe()`, `get-statements()`, and `run()` exports
+- `breaking-change` record with `mitigation-strategy` enum (dual-write, backfill, ratchet, destructive)
+- Rich `db-error` record with PostgreSQL error details (code, constraint name, table name)
+
+---
+
+### Completed: Migration Component Generation (Phase 3)
+
+The compilation module has been implemented in `src/db/compile/` providing Rust source code generation from migration plans.
+
+#### Implemented Components
+
+| Component | Location | Description |
+|-----------|----------|-------------|
+| `MigrationCompiler` | `src/db/compile/codegen.rs` | Generates Rust source from migration operations |
+| `CompilationResult` | `src/db/compile/codegen.rs` | Result containing source code and metadata |
+| `CompiledStatement` | `src/db/compile/codegen.rs` | Statement with SQL, description, and sequence |
+| `CompiledBreakingChange` | `src/db/compile/codegen.rs` | Breaking change with mitigation strategy |
+| `CompileError` | `src/db/compile/error.rs` | Error types with miette diagnostics |
+
+#### Key Features
+
+- Generates Rust source code using `define_migration!` macro
+- Converts `MigrationPlan` operations to SQL statements via `PostgresRenderer`
+- Extracts breaking changes from `BreakingChangeAnalysis`
+- Supports full file output or macro-only output for embedding
+- Proper escaping of SQL strings containing quotes, newlines, etc.
+
+---
+
+### Completed: Migration Runner (Phase 4)
+
+The standalone runner has been implemented in `crates/tern-migration-runner/` using Wasmtime v41.
+
+#### Implemented Components
+
+| Component | Location | Description |
+|-----------|----------|-------------|
+| `MigrationRuntime` | `src/runtime.rs` | Wasmtime wrapper for loading and executing components |
+| `HostState` | `src/host.rs` | State management for database connection and dry-run mode |
+| `RuntimeError` | `src/error.rs` | Error types for runtime operations |
+| `DatabaseError` | `src/error.rs` | Error types for database operations |
+| `CliError` | `src/error.rs` | Error types for CLI operations |
+| CLI | `src/main.rs` | Command-line interface with clap |
+
+#### CLI Features
+
+- `--database-url` / `DATABASE_URL` - PostgreSQL connection string
+- `--dry-run` - Show SQL without executing
+- `--describe` - Show migration metadata
+- `--show-sql` - List all SQL statements
+- `--format json|text` - Output format selection
+- `--yes` / `-y` - Skip breaking change confirmation
+- `--component` - Path to WebAssembly component file
+- `--verbose` / `-v` - Enable debug logging
+
+#### Host Function Implementations
+
+- `database::execute()` - Execute SQL with row count return
+- `database::query()` - Execute query returning JSON results
+- `log::log()` - Emit log messages via tracing
+
+#### Key Design Decisions
+
+1. **Wasmtime v41**: Uses latest Wasmtime with Component Model support and `HasSelf<T>` pattern for host function linking.
+
+2. **Async bridging**: Host functions use `tokio::runtime::Handle::try_current()` to bridge async database operations within sync Wasm context.
+
+3. **Dry-run mode**: Records SQL statements without execution for preview functionality.
+
+4. **Rich error handling**: PostgreSQL errors include error code, constraint name, and table name for detailed diagnostics.
+
+---
+
 ## Remaining Work
 
 ### Architecture Overview
@@ -798,20 +887,24 @@ async-trait = "0.1"
 wit-bindgen = "0.36"
 ```
 
-### tern-migration-runner Crate (new)
+### tern-migration-runner Crate (implemented)
 
 ```toml
 [dependencies]
-wasmtime = { version = "28", features = ["component-model"] }
+wasmtime = { version = "41", features = ["component-model"] }
 clap = { version = "4", features = ["derive", "env"] }
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["full", "sync"] }
 tokio-postgres = "0.7"
+tokio-postgres-rustls = "0.13"
+rustls = "0.23"
+webpki-roots = "0.26"
 miette = { version = "7", features = ["fancy"] }
 thiserror = "2"
 tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+async-trait = "0.1"
 ```
 
 ### Build Tools Required
@@ -832,12 +925,12 @@ serde_json = "1"
 | **2** | 2.1 | Create `tern-migration-wit` crate | DONE |
 | | 2.2 | Create `tern-migration-guest` crate | DONE |
 | | 2.3 | Update workspace Cargo.toml | DONE |
-| **3** | 3.1 | Add `db::compile` module structure | TODO |
-| | 3.2 | Implement `MigrationCompiler` | TODO |
-| **4** | 4.1 | Create `tern-migration-runner` crate | TODO |
-| | 4.2 | Implement CLI entry point | TODO |
-| | 4.3 | Implement Wasmtime runtime wrapper | TODO |
-| | 4.4 | Implement host functions | TODO |
+| **3** | 3.1 | Add `db::compile` module structure | DONE |
+| | 3.2 | Implement `MigrationCompiler` | DONE |
+| **4** | 4.1 | Create `tern-migration-runner` crate | DONE |
+| | 4.2 | Implement CLI entry point | DONE |
+| | 4.3 | Implement Wasmtime runtime wrapper | DONE |
+| | 4.4 | Implement host functions | DONE |
 | **5** | 5.1 | Implement `ExecutableBuilder` | TODO |
 | | 5.2 | Create high-level `compile_migration` API | TODO |
 | **6** | 6.1 | Add CLI commands | TODO |
