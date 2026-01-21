@@ -577,74 +577,112 @@ impl SchemaExporter {
 }
 ```
 
-### Phase 2: PGLite Integration
+### Phase 2: PGLite Integration ✅ COMPLETED
 
 **Goal**: Execute SQL DDL in an embedded PostgreSQL environment.
 
+**Status**: Implemented with pglite-oxide integration.
+
 **Tasks**:
-1. Research PGLite Rust/WASM integration options
-2. Implement `PgLiteCatalog` implementing the `Catalog` trait
-3. Add worklist executor for multi-file DDL execution
-4. Implement error categorization for retry logic
+1. ✅ Research PGLite Rust/WASM integration options (selected pglite-oxide crate)
+2. ✅ Implement PGLite runtime management with proxy-based connections
+3. ✅ Add worklist executor for multi-file DDL execution with dependency resolution
+4. ✅ Implement error categorization for retry logic (dependency vs duplicate vs fatal)
+5. ✅ Create `SchemaLoader` for loading schemas from SQL files
+
+**Implementation Summary**:
+- `src/db/pglite/mod.rs`: Main module with `SchemaLoader` for loading schemas from SQL files
+- `src/db/pglite/runtime.rs`: `PgLiteRuntime` for managing embedded PostgreSQL via pglite-oxide
+- `src/db/pglite/worklist.rs`: `WorklistExecutor` with retry-based dependency resolution algorithm
+- `src/db/pglite/error.rs`: Error types with PostgreSQL error code categorization
+
+**Key Features**:
+- **Feature-gated**: PGLite support is behind the `pglite` feature flag (enabled by default)
+- **Proxy-based architecture**: Uses pglite-oxide's proxy server to expose a Unix socket, allowing reuse of existing `PostgresCatalog` implementation
+- **Automatic dependency resolution**: The worklist executor automatically determines execution order based on PostgreSQL error codes
+- **Circular dependency detection**: Detects when files cannot be ordered due to mutual dependencies
 
 **Key code paths**:
 ```rust
-// PGLite catalog implementation
-pub struct PgLiteCatalog {
-    connection: PgLiteConnection,
+// PGLite runtime management
+pub struct PgLiteRuntime {
+    paths: Option<pglite_oxide::PglitePaths>,
+    temp_dir: Option<tempfile::TempDir>,
+    started: bool,
+    proxy_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
-#[async_trait]
-impl Catalog for PgLiteCatalog {
-    async fn get_namespace(&self, name: &str) -> Result<NamespaceInfo, Error> {
-        // Query pg_namespace via PGLite
-    }
-
-    async fn get_tables(&self, namespace_oid: Oid) -> Result<Vec<TableInfo>, Error> {
-        // Query pg_class via PGLite
-    }
-
-    // ... other Catalog methods
+impl PgLiteRuntime {
+    pub fn new() -> Result<Self, PgLiteError> { /* ... */ }
+    pub async fn start(&mut self) -> Result<(), PgLiteError> { /* ... */ }
+    pub async fn client(&self) -> Result<Client, PgLiteError> { /* ... */ }
 }
 
-// Worklist executor
+// Worklist executor with dependency resolution
 pub struct WorklistExecutor {
-    catalog: PgLiteCatalog,
+    max_iterations: usize,
 }
 
 impl WorklistExecutor {
-    pub async fn execute_files(&self, files: Vec<PathBuf>) -> Result<(), Error> {
-        let mut queue: VecDeque<_> = files.into();
-        let mut visits_since_removal = 0;
+    pub async fn execute_files(
+        &self,
+        client: &Client,
+        files: &[PathBuf],
+    ) -> Result<(), WorklistError> {
+        let mut queue: VecDeque<PathBuf> = files.iter().cloned().collect();
+        let mut visits_since_success = 0;
 
         while let Some(file) = queue.pop_front() {
-            let sql = fs::read_to_string(&file)?;
+            let sql = std::fs::read_to_string(&file)?;
+            let result = self.execute_sql(client, &sql).await;
 
-            match self.catalog.execute(&sql).await {
-                Ok(_) => {
-                    visits_since_removal = 0;
-                }
-                Err(e) if Self::is_dependency_error(&e) => {
-                    visits_since_removal += 1;
-                    if visits_since_removal > queue.len() {
-                        return Err(Error::CircularDependency);
+            match result {
+                ExecutionResult::Success => visits_since_success = 0,
+                ExecutionResult::Skipped { .. } => visits_since_success = 0,
+                ExecutionResult::DependencyError { .. } => {
+                    visits_since_success += 1;
+                    if visits_since_success > queue.len() {
+                        return Err(WorklistError::CircularDependency { /* ... */ });
                     }
                     queue.push_back(file);
                 }
-                Err(e) => return Err(e),
+                ExecutionResult::Failed { error } => {
+                    return Err(WorklistError::ExecutionFailed { /* ... */ });
+                }
             }
         }
-
         Ok(())
     }
+}
 
-    fn is_dependency_error(e: &PgError) -> bool {
-        matches!(
-            e.code(),
-            Some("42P01") | // undefined_table
-            Some("42883") | // undefined_function
-            Some("42704")   // undefined_object
-        )
+// Error code categorization
+pub mod error_codes {
+    pub const UNDEFINED_TABLE: &str = "42P01";
+    pub const UNDEFINED_FUNCTION: &str = "42883";
+    pub const UNDEFINED_OBJECT: &str = "42704";
+    pub const DUPLICATE_TABLE: &str = "42P07";
+    // ...
+
+    pub fn is_dependency_error(code: &str) -> bool { /* ... */ }
+    pub fn is_duplicate_error(code: &str) -> bool { /* ... */ }
+}
+
+// Schema loader combining everything
+pub struct SchemaLoader;
+
+impl SchemaLoader {
+    pub async fn load_file(path: impl AsRef<Path>) -> Result<Namespace, PgLiteError> {
+        let mut runtime = PgLiteRuntime::new()?;
+        runtime.start().await?;
+        let client = runtime.client().await?;
+        let sql = std::fs::read_to_string(path)?;
+        client.batch_execute(&sql).await?;
+        let catalog = PostgresCatalog::new(&client);
+        load_namespace(&catalog, "public").await
+    }
+
+    pub async fn load_directory(path: impl AsRef<Path>) -> Result<Namespace, PgLiteError> {
+        // Uses WorklistExecutor for multi-file execution
     }
 }
 ```
