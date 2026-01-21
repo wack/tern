@@ -1,0 +1,28 @@
+// Minimal WASI CLI standard I/O interfaces for compilation
+// Based on WASI Preview 2 specification
+
+package wasi:cli@0.2.0;
+
+/// Standard input stream.
+interface stdin {
+    use wasi:io/streams@0.2.0.{input-stream};
+
+    /// Get the standard input stream.
+    get-stdin: func() -> input-stream;
+}
+
+/// Standard output stream.
+interface stdout {
+    use wasi:io/streams@0.2.0.{output-stream};
+
+    /// Get the standard output stream.
+    get-stdout: func() -> output-stream;
+}
+
+/// Standard error stream.
+interface stderr {
+    use wasi:io/streams@0.2.0.{output-stream};
+
+    /// Get the standard error stream.
+    get-stderr: func() -> output-stream;
+}

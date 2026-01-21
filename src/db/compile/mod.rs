@@ -141,12 +141,25 @@
 //! )?;
 //! ```
 
+mod aot;
 mod codegen;
+mod composer;
+mod data_component;
+mod embedded;
 mod error;
 mod executable;
 
+pub use aot::{AotCompiler, AotOutput, AotResult, AotTarget};
 pub use codegen::{
     CompilationResult, CompiledBreakingChange, CompiledStatement, CompilerConfig, MigrationCompiler,
+};
+pub use composer::{ComponentComposer, CompositionConfig};
+pub use data_component::{
+    BreakingChangeData, DataComponentGenerator, MigrationData, MitigationStrategy, StatementData,
+};
+pub use embedded::{
+    GUEST_COMPONENT, RUNNER_COMPONENT, components_available, guest_component, guest_component_size,
+    runner_component, runner_component_size, validate_wasm_bytes,
 };
 pub use error::CompileError;
 pub use executable::{BuildResult, ExecutableBuilder, Target};

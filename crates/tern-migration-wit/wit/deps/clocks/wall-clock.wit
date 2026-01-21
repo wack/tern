@@ -1,0 +1,21 @@
+// Minimal WASI wall clock interface for compilation
+// Based on WASI Preview 2 specification
+
+package wasi:clocks@0.2.0;
+
+/// Wall clock time.
+interface wall-clock {
+    /// A timestamp from the wall clock.
+    record datetime {
+        /// Seconds since the Unix epoch.
+        seconds: u64,
+        /// Nanoseconds within the second.
+        nanoseconds: u32,
+    }
+
+    /// Get the current wall-clock time.
+    now: func() -> datetime;
+
+    /// Query the resolution of the wall clock.
+    resolution: func() -> datetime;
+}

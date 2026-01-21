@@ -1,0 +1,88 @@
+// Tern Migration Data Interface
+//
+// This interface defines how migration data is provided to the guest component.
+// The data component (generated at runtime by Tern) exports this interface.
+//
+// Architecture:
+//   ┌─────────────────────────────────────────────────────────────┐
+//   │                    Data Component                           │
+//   │  (generated at runtime with embedded SQL)                   │
+//   │                                                             │
+//   │  Exports:                                                   │
+//   │    - tern:migration-data/migration-data                     │
+//   │      get-id, get-description, get-statements, etc.          │
+//   │                                                             │
+//   └──────────────────────────────┬──────────────────────────────┘
+//                                  │
+//                         exports data
+//                                  │
+//   ┌──────────────────────────────▼──────────────────────────────┐
+//   │                    Guest Component                          │
+//   │  Imports: tern:migration-data/migration-data                │
+//   │  Exports: tern:migration/migration                          │
+//   └─────────────────────────────────────────────────────────────┘
+
+package tern:migration-data@0.1.0;
+
+/// Data interface for migration content.
+///
+/// This interface is implemented by the data component (generated at runtime)
+/// and imported by the guest component. It provides access to the SQL statements
+/// and metadata that were compiled into the migration.
+interface migration-data {
+    /// A SQL statement with metadata.
+    record statement {
+        /// The SQL statement text.
+        sql: string,
+        /// Human-readable description of what this statement does.
+        description: string,
+        /// Sequence number (1-indexed) within the migration.
+        sequence: u32,
+    }
+
+    /// Mitigation strategy for breaking changes.
+    enum mitigation-strategy {
+        /// Requires parallel structures with synchronized writes.
+        dual-write,
+        /// Requires populating data before completion.
+        backfill,
+        /// Requires the NOT VALID + backfill + VALIDATE pattern.
+        ratchet,
+        /// Intentionally removes data or structure. Irreversible.
+        destructive,
+    }
+
+    /// A breaking change in the migration.
+    record breaking-change {
+        /// Human-readable description of the breaking change.
+        description: string,
+        /// Strategy for safely executing this change.
+        mitigation: mitigation-strategy,
+        /// The SQL statement(s) that cause this breaking change.
+        affected-sql: list<string>,
+    }
+
+    /// Get the migration ID (content-addressable hash).
+    get-id: func() -> string;
+
+    /// Get the human-readable description.
+    get-description: func() -> string;
+
+    /// Get the source schema state hash.
+    get-source-state-hash: func() -> string;
+
+    /// Get the target schema state hash.
+    get-target-state-hash: func() -> string;
+
+    /// Get the compilation timestamp (RFC 3339).
+    get-compiled-at: func() -> string;
+
+    /// Get the total number of SQL statements.
+    get-statement-count: func() -> u32;
+
+    /// Get a statement by index (0-based).
+    get-statement: func(index: u32) -> statement;
+
+    /// Get all breaking changes.
+    get-breaking-changes: func() -> list<breaking-change>;
+}
