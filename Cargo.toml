@@ -1,5 +1,10 @@
 [workspace]
-members = [".", "crates/tern-migration-wit", "crates/tern-migration-guest"]
+members = [
+    ".",
+    "crates/tern-migration-wit",
+    "crates/tern-migration-guest",
+    "crates/tern-migration-runner",
+]
 resolver = "3"
 
 [package]
@@ -15,6 +20,7 @@ path = "src/bin/main.rs"
 # Workspace crates
 tern-migration-wit = { path = "crates/tern-migration-wit" }
 tern-migration-guest = { path = "crates/tern-migration-guest" }
+tern-migration-runner = { path = "crates/tern-migration-runner" }
 async-trait = "0.1.89"
 bon = "3.8.1"
 jiff = { version = "0.2.1", features = ["serde"] }
