@@ -146,6 +146,67 @@ pub enum CompileError {
         help("The source and target schemas are identical")
     )]
     NoChanges,
+
+    /// Embedded component not available.
+    #[error("embedded {component} component is not available")]
+    #[diagnostic(
+        code(tern::compile::component_not_available),
+        help("The {component} component requires the WASI rewrite to be completed")
+    )]
+    ComponentNotAvailable {
+        /// The name of the component.
+        component: String,
+    },
+
+    /// Invalid WebAssembly component.
+    #[error("invalid {component} component: {reason}")]
+    #[diagnostic(code(tern::compile::invalid_component))]
+    InvalidComponent {
+        /// The name of the component.
+        component: String,
+        /// The reason the component is invalid.
+        reason: String,
+    },
+
+    /// Wasmtime engine creation failed.
+    #[error("failed to create Wasmtime engine: {message}")]
+    #[diagnostic(code(tern::compile::engine_error))]
+    EngineCreationError {
+        /// The error message.
+        message: String,
+    },
+
+    /// Failed to load WebAssembly component.
+    #[error("failed to load WebAssembly component: {message}")]
+    #[diagnostic(code(tern::compile::component_load_error))]
+    ComponentLoadError {
+        /// The error message.
+        message: String,
+    },
+
+    /// Failed to serialize component for AOT compilation.
+    #[error("failed to serialize component: {message}")]
+    #[diagnostic(code(tern::compile::serialization_error))]
+    SerializationError {
+        /// The error message.
+        message: String,
+    },
+
+    /// Component composition failed.
+    #[error("failed to compose components: {message}")]
+    #[diagnostic(code(tern::compile::composition_error))]
+    CompositionError {
+        /// The error message.
+        message: String,
+    },
+
+    /// Data component generation failed.
+    #[error("failed to generate data component: {message}")]
+    #[diagnostic(code(tern::compile::data_component_error))]
+    DataComponentError {
+        /// The error message.
+        message: String,
+    },
 }
 
 impl CompileError {
@@ -243,6 +304,56 @@ impl CompileError {
     pub fn no_changes() -> Self {
         Self::NoChanges
     }
+
+    /// Create a component not available error.
+    pub fn component_not_available(component: impl Into<String>) -> Self {
+        Self::ComponentNotAvailable {
+            component: component.into(),
+        }
+    }
+
+    /// Create an invalid component error.
+    pub fn invalid_component(component: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self::InvalidComponent {
+            component: component.into(),
+            reason: reason.into(),
+        }
+    }
+
+    /// Create an engine creation error.
+    pub fn engine_creation(error: impl std::fmt::Display) -> Self {
+        Self::EngineCreationError {
+            message: error.to_string(),
+        }
+    }
+
+    /// Create a component load error.
+    pub fn component_load(error: impl std::fmt::Display) -> Self {
+        Self::ComponentLoadError {
+            message: error.to_string(),
+        }
+    }
+
+    /// Create a serialization error.
+    pub fn serialization(error: impl std::fmt::Display) -> Self {
+        Self::SerializationError {
+            message: error.to_string(),
+        }
+    }
+
+    /// Create a composition error.
+    pub fn composition(message: impl Into<String>) -> Self {
+        Self::CompositionError {
+            message: message.into(),
+        }
+    }
+
+    /// Create a data component generation error.
+    pub fn data_component(message: impl Into<String>) -> Self {
+        Self::DataComponentError {
+            message: message.into(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -322,5 +433,68 @@ mod tests {
     fn no_changes_error_display() {
         let err = CompileError::no_changes();
         assert_eq!(format!("{}", err), "schema diff produced no changes");
+    }
+
+    #[test]
+    fn component_not_available_error_display() {
+        let err = CompileError::component_not_available("runner");
+        assert_eq!(
+            format!("{}", err),
+            "embedded runner component is not available"
+        );
+    }
+
+    #[test]
+    fn invalid_component_error_display() {
+        let err = CompileError::invalid_component("guest", "invalid magic number");
+        assert_eq!(
+            format!("{}", err),
+            "invalid guest component: invalid magic number"
+        );
+    }
+
+    #[test]
+    fn engine_creation_error_display() {
+        let err = CompileError::engine_creation("configuration error");
+        assert_eq!(
+            format!("{}", err),
+            "failed to create Wasmtime engine: configuration error"
+        );
+    }
+
+    #[test]
+    fn component_load_error_display() {
+        let err = CompileError::component_load("parse error");
+        assert_eq!(
+            format!("{}", err),
+            "failed to load WebAssembly component: parse error"
+        );
+    }
+
+    #[test]
+    fn serialization_error_display() {
+        let err = CompileError::serialization("encoding failed");
+        assert_eq!(
+            format!("{}", err),
+            "failed to serialize component: encoding failed"
+        );
+    }
+
+    #[test]
+    fn composition_error_display() {
+        let err = CompileError::composition("interface mismatch");
+        assert_eq!(
+            format!("{}", err),
+            "failed to compose components: interface mismatch"
+        );
+    }
+
+    #[test]
+    fn data_component_error_display() {
+        let err = CompileError::data_component("invalid metadata");
+        assert_eq!(
+            format!("{}", err),
+            "failed to generate data component: invalid metadata"
+        );
     }
 }
