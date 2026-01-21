@@ -11,8 +11,8 @@ use std::path::PathBuf;
 use miette::{Context, IntoDiagnostic, miette};
 use serde::Serialize;
 
-use super::{OutputFormat, print_json};
-use crate::db::state::{LocalFileBackend, Migration, MigrationId, StateBackend, StateHash};
+use super::{LocalFileBackend, OutputFormat, ensure_backend_initialized, load_backend, print_json};
+use crate::db::state::{Migration, MigrationId, StateBackend, StateHash};
 
 /// Record output for JSON format.
 #[derive(Debug, Clone, Serialize)]
@@ -75,17 +75,8 @@ pub async fn run_record(
     }
 
     // Load the state backend
-    let backend = match state_path {
-        Some(p) => LocalFileBackend::at_path(p),
-        None => LocalFileBackend::default_location(),
-    };
-
-    if !backend.is_initialized().await.into_diagnostic()? {
-        return Err(miette!(
-            "State backend not initialized at {}\n\nRun 'tern init' to initialize a new project.",
-            backend.root().display()
-        ));
-    }
+    let backend = load_backend(state_path);
+    ensure_backend_initialized(&backend).await?;
 
     // Load the migration
     let (migration, new_state) = if let Some(file_path) = migration_file {

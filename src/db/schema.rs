@@ -8,6 +8,34 @@ use nutype::nutype;
 use serde::{Deserialize, Serialize};
 
 // =============================================================================
+// Test Macros for Enum Roundtrip Conversions
+// =============================================================================
+
+/// Tests that an enum variant can be converted to a character and parsed back.
+///
+/// # Example
+///
+/// ```ignore
+/// assert_enum_char_roundtrip!(RelationKind, [
+///     RelationKind::Table,
+///     RelationKind::Index,
+///     RelationKind::Sequence,
+/// ]);
+/// ```
+#[macro_export]
+macro_rules! assert_enum_char_roundtrip {
+    ($enum_type:ty, [$($variant:expr),+ $(,)?]) => {
+        {
+            $(
+                let c = $variant.as_char();
+                let parsed = <$enum_type>::try_from(c).unwrap();
+                assert_eq!($variant, parsed, "Roundtrip failed for {:?}", $variant);
+            )+
+        }
+    };
+}
+
+// =============================================================================
 // OID (Object Identifier)
 // =============================================================================
 
@@ -249,49 +277,23 @@ pub enum RelationKind {
     PartitionedIndex,
 }
 
-impl RelationKind {
-    /// Returns the single-character code used by PostgreSQL.
-    #[must_use]
-    pub const fn as_char(&self) -> char {
-        match self {
-            Self::Table => 'r',
-            Self::Index => 'i',
-            Self::Sequence => 'S',
-            Self::Toast => 't',
-            Self::View => 'v',
-            Self::MaterializedView => 'm',
-            Self::CompositeType => 'c',
-            Self::ForeignTable => 'f',
-            Self::PartitionedTable => 'p',
-            Self::PartitionedIndex => 'I',
-        }
-    }
-}
-
 /// Error returned when parsing an invalid relation kind character.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid relation kind: '{0}'")]
 pub struct InvalidRelationKind(pub char);
 
-impl TryFrom<char> for RelationKind {
-    type Error = InvalidRelationKind;
-
-    fn try_from(c: char) -> Result<Self, Self::Error> {
-        match c {
-            'r' => Ok(Self::Table),
-            'i' => Ok(Self::Index),
-            'S' => Ok(Self::Sequence),
-            't' => Ok(Self::Toast),
-            'v' => Ok(Self::View),
-            'm' => Ok(Self::MaterializedView),
-            'c' => Ok(Self::CompositeType),
-            'f' => Ok(Self::ForeignTable),
-            'p' => Ok(Self::PartitionedTable),
-            'I' => Ok(Self::PartitionedIndex),
-            _ => Err(InvalidRelationKind(c)),
-        }
-    }
-}
+crate::impl_char_enum!(RelationKind, InvalidRelationKind, [
+    Table => 'r',
+    Index => 'i',
+    Sequence => 'S',
+    Toast => 't',
+    View => 'v',
+    MaterializedView => 'm',
+    CompositeType => 'c',
+    ForeignTable => 'f',
+    PartitionedTable => 'p',
+    PartitionedIndex => 'I',
+]);
 
 // =============================================================================
 // Constraint Type (pg_constraint.contype)
@@ -315,39 +317,18 @@ pub enum ConstraintType {
     Exclusion,
 }
 
-impl ConstraintType {
-    /// Returns the single-character code used by PostgreSQL.
-    #[must_use]
-    pub const fn as_char(&self) -> char {
-        match self {
-            Self::Check => 'c',
-            Self::ForeignKey => 'f',
-            Self::PrimaryKey => 'p',
-            Self::Unique => 'u',
-            Self::Exclusion => 'x',
-        }
-    }
-}
-
 /// Error returned when parsing an invalid constraint type character.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid constraint type: '{0}'")]
 pub struct InvalidConstraintType(pub char);
 
-impl TryFrom<char> for ConstraintType {
-    type Error = InvalidConstraintType;
-
-    fn try_from(c: char) -> Result<Self, Self::Error> {
-        match c {
-            'c' => Ok(Self::Check),
-            'f' => Ok(Self::ForeignKey),
-            'p' => Ok(Self::PrimaryKey),
-            'u' => Ok(Self::Unique),
-            'x' => Ok(Self::Exclusion),
-            _ => Err(InvalidConstraintType(c)),
-        }
-    }
-}
+crate::impl_char_enum!(ConstraintType, InvalidConstraintType, [
+    Check => 'c',
+    ForeignKey => 'f',
+    PrimaryKey => 'p',
+    Unique => 'u',
+    Exclusion => 'x',
+]);
 
 #[cfg(test)]
 mod tests {
@@ -484,22 +465,21 @@ mod tests {
 
         #[test]
         fn relation_kind_roundtrip() {
-            for kind in [
-                RelationKind::Table,
-                RelationKind::Index,
-                RelationKind::Sequence,
-                RelationKind::Toast,
-                RelationKind::View,
-                RelationKind::MaterializedView,
-                RelationKind::CompositeType,
-                RelationKind::ForeignTable,
-                RelationKind::PartitionedTable,
-                RelationKind::PartitionedIndex,
-            ] {
-                let c = kind.as_char();
-                let parsed = RelationKind::try_from(c).unwrap();
-                assert_eq!(kind, parsed);
-            }
+            crate::assert_enum_char_roundtrip!(
+                RelationKind,
+                [
+                    RelationKind::Table,
+                    RelationKind::Index,
+                    RelationKind::Sequence,
+                    RelationKind::Toast,
+                    RelationKind::View,
+                    RelationKind::MaterializedView,
+                    RelationKind::CompositeType,
+                    RelationKind::ForeignTable,
+                    RelationKind::PartitionedTable,
+                    RelationKind::PartitionedIndex,
+                ]
+            );
         }
     }
 
@@ -539,17 +519,16 @@ mod tests {
 
         #[test]
         fn constraint_type_roundtrip() {
-            for kind in [
-                ConstraintType::Check,
-                ConstraintType::ForeignKey,
-                ConstraintType::PrimaryKey,
-                ConstraintType::Unique,
-                ConstraintType::Exclusion,
-            ] {
-                let c = kind.as_char();
-                let parsed = ConstraintType::try_from(c).unwrap();
-                assert_eq!(kind, parsed);
-            }
+            crate::assert_enum_char_roundtrip!(
+                ConstraintType,
+                [
+                    ConstraintType::Check,
+                    ConstraintType::ForeignKey,
+                    ConstraintType::PrimaryKey,
+                    ConstraintType::Unique,
+                    ConstraintType::Exclusion,
+                ]
+            );
         }
     }
 }

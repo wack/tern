@@ -46,33 +46,12 @@ pub enum TableKind {
     Partitioned,
 }
 
-impl TableKind {
-    /// Returns the single-character code used by PostgreSQL in `pg_class.relkind`.
-    #[must_use]
-    pub const fn as_char(&self) -> char {
-        match self {
-            Self::Regular => 'r',
-            Self::Partitioned => 'p',
-        }
-    }
-}
-
 /// Error returned when parsing an invalid table kind character.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid table kind: '{0}'")]
 pub struct InvalidTableKind(pub char);
 
-impl TryFrom<char> for TableKind {
-    type Error = InvalidTableKind;
-
-    fn try_from(c: char) -> Result<Self, Self::Error> {
-        match c {
-            'r' => Ok(Self::Regular),
-            'p' => Ok(Self::Partitioned),
-            _ => Err(InvalidTableKind(c)),
-        }
-    }
-}
+crate::impl_char_enum!(TableKind, InvalidTableKind, [Regular => 'r', Partitioned => 'p',]);
 
 #[cfg(test)]
 mod tests {
@@ -80,11 +59,10 @@ mod tests {
 
     #[test]
     fn table_kind_roundtrip() {
-        for kind in [TableKind::Regular, TableKind::Partitioned] {
-            let c = kind.as_char();
-            let parsed = TableKind::try_from(c).unwrap();
-            assert_eq!(kind, parsed);
-        }
+        crate::assert_enum_char_roundtrip!(
+            TableKind,
+            [TableKind::Regular, TableKind::Partitioned,]
+        );
     }
 
     #[test]

@@ -108,51 +108,26 @@ pub enum ForeignKeyAction {
     SetDefault,
 }
 
-impl ForeignKeyAction {
-    /// Returns the single-character code used by PostgreSQL.
-    #[must_use]
-    pub const fn as_char(&self) -> char {
-        match self {
-            Self::NoAction => 'a',
-            Self::Restrict => 'r',
-            Self::Cascade => 'c',
-            Self::SetNull => 'n',
-            Self::SetDefault => 'd',
-        }
-    }
-
-    /// Returns the SQL keyword for this action.
-    #[must_use]
-    pub const fn as_sql(&self) -> &'static str {
-        match self {
-            Self::NoAction => "NO ACTION",
-            Self::Restrict => "RESTRICT",
-            Self::Cascade => "CASCADE",
-            Self::SetNull => "SET NULL",
-            Self::SetDefault => "SET DEFAULT",
-        }
-    }
-}
-
 /// Error returned when parsing an invalid foreign key action character.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid foreign key action: '{0}'")]
 pub struct InvalidForeignKeyAction(pub char);
 
-impl TryFrom<char> for ForeignKeyAction {
-    type Error = InvalidForeignKeyAction;
+crate::impl_char_enum!(ForeignKeyAction, InvalidForeignKeyAction, [
+    NoAction => 'a',
+    Restrict => 'r',
+    Cascade => 'c',
+    SetNull => 'n',
+    SetDefault => 'd',
+]);
 
-    fn try_from(c: char) -> Result<Self, Self::Error> {
-        match c {
-            'a' => Ok(Self::NoAction),
-            'r' => Ok(Self::Restrict),
-            'c' => Ok(Self::Cascade),
-            'n' => Ok(Self::SetNull),
-            'd' => Ok(Self::SetDefault),
-            _ => Err(InvalidForeignKeyAction(c)),
-        }
-    }
-}
+crate::impl_sql_enum!(ForeignKeyAction, [
+    NoAction => "NO ACTION",
+    Restrict => "RESTRICT",
+    Cascade => "CASCADE",
+    SetNull => "SET NULL",
+    SetDefault => "SET DEFAULT",
+]);
 
 // =============================================================================
 // Index Method
@@ -179,41 +154,28 @@ pub enum IndexMethod {
     SpGist,
 }
 
-impl IndexMethod {
-    /// Returns the access method name as used in SQL.
-    #[must_use]
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::BTree => "btree",
-            Self::Hash => "hash",
-            Self::Gist => "gist",
-            Self::Gin => "gin",
-            Self::Brin => "brin",
-            Self::SpGist => "spgist",
-        }
-    }
-}
-
 /// Error returned when parsing an invalid index method name.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid index method: '{0}'")]
 pub struct InvalidIndexMethod(pub String);
 
-impl TryFrom<&str> for IndexMethod {
-    type Error = InvalidIndexMethod;
+crate::impl_str_enum!(IndexMethod, [
+    BTree => "btree",
+    Hash => "hash",
+    Gist => "gist",
+    Gin => "gin",
+    Brin => "brin",
+    SpGist => "spgist",
+]);
 
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        match s {
-            "btree" => Ok(Self::BTree),
-            "hash" => Ok(Self::Hash),
-            "gist" => Ok(Self::Gist),
-            "gin" => Ok(Self::Gin),
-            "brin" => Ok(Self::Brin),
-            "spgist" => Ok(Self::SpGist),
-            _ => Err(InvalidIndexMethod(s.to_string())),
-        }
-    }
-}
+crate::impl_str_from_enum!(IndexMethod, InvalidIndexMethod, [
+    "btree" => BTree,
+    "hash" => Hash,
+    "gist" => Gist,
+    "gin" => Gin,
+    "brin" => Brin,
+    "spgist" => SpGist,
+]);
 
 // =============================================================================
 // Comment

@@ -3,12 +3,12 @@
 //! This command verifies that the state backend matches the current
 //! database schema, detecting any drift from manual changes.
 
-use miette::{Context, IntoDiagnostic, miette};
+use miette::{Context, IntoDiagnostic};
 use serde::Serialize;
 
-use super::{OutputFormat, print_json};
+use super::{LocalFileBackend, OutputFormat, ensure_backend_initialized, load_backend, print_json};
 use crate::db::query::PostgresCatalog;
-use crate::db::state::{LocalFileBackend, StateBackend, StateHash, verify_state};
+use crate::db::state::{StateBackend, StateHash, verify_state};
 use crate::db::{self};
 
 /// Verify output for JSON format.
@@ -120,17 +120,8 @@ pub async fn run_verify(
     state_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
     // Load the state backend
-    let backend = match state_path {
-        Some(p) => LocalFileBackend::at_path(p),
-        None => LocalFileBackend::default_location(),
-    };
-
-    if !backend.is_initialized().await.into_diagnostic()? {
-        return Err(miette!(
-            "State backend not initialized at {}\n\nRun 'tern init' to initialize a new project.",
-            backend.root().display()
-        ));
-    }
+    let backend = load_backend(state_path);
+    ensure_backend_initialized(&backend).await?;
 
     // Connect to database
     println!("Connecting to database...");
@@ -252,17 +243,8 @@ pub async fn run_verify_chain(
     state_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
     // Load the state backend
-    let backend = match state_path {
-        Some(p) => LocalFileBackend::at_path(p),
-        None => LocalFileBackend::default_location(),
-    };
-
-    if !backend.is_initialized().await.into_diagnostic()? {
-        return Err(miette!(
-            "State backend not initialized at {}\n\nRun 'tern init' to initialize a new project.",
-            backend.root().display()
-        ));
-    }
+    let backend = load_backend(state_path);
+    ensure_backend_initialized(&backend).await?;
 
     println!("Verifying migration chain...");
 

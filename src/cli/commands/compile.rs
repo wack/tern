@@ -8,10 +8,10 @@ use std::path::PathBuf;
 use miette::{Context, IntoDiagnostic, miette};
 use serde::Serialize;
 
-use super::{OutputFormat, print_json};
+use super::{LocalFileBackend, OutputFormat, ensure_backend_initialized, load_backend, print_json};
 use crate::db::compile::{CompileOptions, Target, compile_migration};
 use crate::db::query::PostgresCatalog;
-use crate::db::state::{LocalFileBackend, StateBackend};
+use crate::db::state::StateBackend;
 use crate::db::{self};
 
 /// Compile output for JSON format.
@@ -126,17 +126,8 @@ pub async fn run_compile(
     })?;
 
     // Load the state backend
-    let backend = match state_path {
-        Some(p) => LocalFileBackend::at_path(p),
-        None => LocalFileBackend::default_location(),
-    };
-
-    if !backend.is_initialized().await.into_diagnostic()? {
-        return Err(miette!(
-            "State backend not initialized at {}\n\nRun 'tern init' to initialize a new project.",
-            backend.root().display()
-        ));
-    }
+    let backend = load_backend(state_path);
+    ensure_backend_initialized(&backend).await?;
 
     // Get current state from backend
     let source_state = backend
