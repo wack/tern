@@ -15,7 +15,7 @@
 
 use std::fmt;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::db::diff::breaking::BreakingChange;
@@ -298,7 +298,7 @@ pub struct Migration {
     pub description: String,
 
     /// When the migration was created (not applied).
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 
     /// The operations that make up this migration.
     pub operations: Vec<Operation>,
@@ -336,7 +336,7 @@ impl Migration {
         Self {
             id,
             description,
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
             operations,
             parent_state_hash,
             resulting_state_hash,
@@ -358,7 +358,7 @@ impl Migration {
         Self {
             id,
             description,
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
             operations: vec![],
             parent_state_hash: StateHash::zero(),
             resulting_state_hash: resulting_hash,
