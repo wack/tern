@@ -2,11 +2,11 @@
 //!
 //! This command displays the migration history from the state backend.
 
-use miette::{IntoDiagnostic, miette};
+use miette::IntoDiagnostic;
 use serde::Serialize;
 
-use super::{OutputFormat, print_json};
-use crate::db::state::{LocalFileBackend, StateBackend};
+use super::{LocalFileBackend, OutputFormat, ensure_backend_initialized, load_backend, print_json};
+use crate::db::state::StateBackend;
 
 /// History output for JSON format.
 #[derive(Debug, Clone, Serialize)]
@@ -129,17 +129,8 @@ pub async fn run_history(
     state_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
     // Load the state backend
-    let backend = match state_path {
-        Some(p) => LocalFileBackend::at_path(p),
-        None => LocalFileBackend::default_location(),
-    };
-
-    if !backend.is_initialized().await.into_diagnostic()? {
-        return Err(miette!(
-            "State backend not initialized at {}\n\nRun 'tern init' to initialize a new project.",
-            backend.root().display()
-        ));
-    }
+    let backend = load_backend(state_path);
+    ensure_backend_initialized(&backend).await?;
 
     // Get all migrations
     let all_migrations = backend.get_all_migrations().await.into_diagnostic()?;

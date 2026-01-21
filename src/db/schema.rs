@@ -8,6 +8,34 @@ use nutype::nutype;
 use serde::{Deserialize, Serialize};
 
 // =============================================================================
+// Test Macros for Enum Roundtrip Conversions
+// =============================================================================
+
+/// Tests that an enum variant can be converted to a character and parsed back.
+///
+/// # Example
+///
+/// ```ignore
+/// assert_enum_char_roundtrip!(RelationKind, [
+///     RelationKind::Table,
+///     RelationKind::Index,
+///     RelationKind::Sequence,
+/// ]);
+/// ```
+#[macro_export]
+macro_rules! assert_enum_char_roundtrip {
+    ($enum_type:ty, [$($variant:expr),+ $(,)?]) => {
+        {
+            $(
+                let c = $variant.as_char();
+                let parsed = <$enum_type>::try_from(c).unwrap();
+                assert_eq!($variant, parsed, "Roundtrip failed for {:?}", $variant);
+            )+
+        }
+    };
+}
+
+// =============================================================================
 // OID (Object Identifier)
 // =============================================================================
 
@@ -484,22 +512,21 @@ mod tests {
 
         #[test]
         fn relation_kind_roundtrip() {
-            for kind in [
-                RelationKind::Table,
-                RelationKind::Index,
-                RelationKind::Sequence,
-                RelationKind::Toast,
-                RelationKind::View,
-                RelationKind::MaterializedView,
-                RelationKind::CompositeType,
-                RelationKind::ForeignTable,
-                RelationKind::PartitionedTable,
-                RelationKind::PartitionedIndex,
-            ] {
-                let c = kind.as_char();
-                let parsed = RelationKind::try_from(c).unwrap();
-                assert_eq!(kind, parsed);
-            }
+            crate::assert_enum_char_roundtrip!(
+                RelationKind,
+                [
+                    RelationKind::Table,
+                    RelationKind::Index,
+                    RelationKind::Sequence,
+                    RelationKind::Toast,
+                    RelationKind::View,
+                    RelationKind::MaterializedView,
+                    RelationKind::CompositeType,
+                    RelationKind::ForeignTable,
+                    RelationKind::PartitionedTable,
+                    RelationKind::PartitionedIndex,
+                ]
+            );
         }
     }
 
@@ -539,17 +566,16 @@ mod tests {
 
         #[test]
         fn constraint_type_roundtrip() {
-            for kind in [
-                ConstraintType::Check,
-                ConstraintType::ForeignKey,
-                ConstraintType::PrimaryKey,
-                ConstraintType::Unique,
-                ConstraintType::Exclusion,
-            ] {
-                let c = kind.as_char();
-                let parsed = ConstraintType::try_from(c).unwrap();
-                assert_eq!(kind, parsed);
-            }
+            crate::assert_enum_char_roundtrip!(
+                ConstraintType,
+                [
+                    ConstraintType::Check,
+                    ConstraintType::ForeignKey,
+                    ConstraintType::PrimaryKey,
+                    ConstraintType::Unique,
+                    ConstraintType::Exclusion,
+                ]
+            );
         }
     }
 }

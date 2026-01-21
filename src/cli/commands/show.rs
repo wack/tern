@@ -2,10 +2,10 @@
 //!
 //! This command displays detailed information about a specific migration.
 
-use miette::{IntoDiagnostic, miette};
+use miette::{Context, IntoDiagnostic, miette};
 use serde::Serialize;
 
-use super::{OutputFormat, print_json};
+use super::{OutputFormat, ensure_backend_initialized, load_backend, print_json};
 use crate::db::migrate::{MigrationPlan, PostgresRenderer, RenderConfig};
 use crate::db::state::{LocalFileBackend, MigrationId, StateBackend};
 
@@ -113,17 +113,8 @@ pub async fn run_show(
     state_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
     // Load the state backend
-    let backend = match state_path {
-        Some(p) => LocalFileBackend::at_path(p),
-        None => LocalFileBackend::default_location(),
-    };
-
-    if !backend.is_initialized().await.into_diagnostic()? {
-        return Err(miette!(
-            "State backend not initialized at {}\n\nRun 'tern init' to initialize a new project.",
-            backend.root().display()
-        ));
-    }
+    let backend = load_backend(state_path);
+    ensure_backend_initialized(&backend).await?;
 
     // Find the migration
     let migration = find_migration(&backend, migration_id).await?;
@@ -227,8 +218,6 @@ async fn find_migration(
         )),
     }
 }
-
-use miette::Context;
 
 #[cfg(test)]
 mod tests {

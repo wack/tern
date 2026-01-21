@@ -139,19 +139,15 @@ mod tests {
 
     #[test]
     fn generated_storage_roundtrip() {
-        let storage = GeneratedStorage::Stored;
-        let c = storage.as_char();
-        let parsed = GeneratedStorage::try_from(c).unwrap();
-        assert_eq!(storage, parsed);
+        crate::assert_enum_char_roundtrip!(GeneratedStorage, [GeneratedStorage::Stored]);
     }
 
     #[test]
     fn identity_kind_roundtrip() {
-        for kind in [IdentityKind::Always, IdentityKind::ByDefault] {
-            let c = kind.as_char();
-            let parsed = IdentityKind::try_from(c).unwrap();
-            assert_eq!(kind, parsed);
-        }
+        crate::assert_enum_char_roundtrip!(
+            IdentityKind,
+            [IdentityKind::Always, IdentityKind::ByDefault,]
+        );
     }
 
     #[test]

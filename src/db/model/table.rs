@@ -80,11 +80,10 @@ mod tests {
 
     #[test]
     fn table_kind_roundtrip() {
-        for kind in [TableKind::Regular, TableKind::Partitioned] {
-            let c = kind.as_char();
-            let parsed = TableKind::try_from(c).unwrap();
-            assert_eq!(kind, parsed);
-        }
+        crate::assert_enum_char_roundtrip!(
+            TableKind,
+            [TableKind::Regular, TableKind::Partitioned,]
+        );
     }
 
     #[test]

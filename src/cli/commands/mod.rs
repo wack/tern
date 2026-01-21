@@ -22,6 +22,33 @@ pub use status::run_status;
 pub use verify::{run_verify, run_verify_chain};
 
 // =============================================================================
+// Shared Helpers
+// =============================================================================
+
+pub use crate::db::state::LocalFileBackend;
+use crate::db::state::StateBackend;
+use miette::IntoDiagnostic;
+use std::path::Path;
+
+/// Loads or creates a state backend, preferring the specified path or the default location.
+pub fn load_backend(state_path: Option<&Path>) -> LocalFileBackend {
+    state_path
+        .map(LocalFileBackend::at_path)
+        .unwrap_or_else(LocalFileBackend::default_location)
+}
+
+/// Ensures the backend is initialized, returning an error if not.
+pub async fn ensure_backend_initialized(backend: &LocalFileBackend) -> miette::Result<()> {
+    if !backend.is_initialized().await.into_diagnostic()? {
+        return Err(miette::miette!(
+            "State backend not initialized at {}\n\nRun 'tern init' to initialize a new project.",
+            backend.root().display()
+        ));
+    }
+    Ok(())
+}
+
+// =============================================================================
 // Shared Output Formatting
 // =============================================================================
 
