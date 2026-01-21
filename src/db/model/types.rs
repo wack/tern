@@ -154,41 +154,28 @@ pub enum IndexMethod {
     SpGist,
 }
 
-impl IndexMethod {
-    /// Returns the access method name as used in SQL.
-    #[must_use]
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::BTree => "btree",
-            Self::Hash => "hash",
-            Self::Gist => "gist",
-            Self::Gin => "gin",
-            Self::Brin => "brin",
-            Self::SpGist => "spgist",
-        }
-    }
-}
-
 /// Error returned when parsing an invalid index method name.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid index method: '{0}'")]
 pub struct InvalidIndexMethod(pub String);
 
-impl TryFrom<&str> for IndexMethod {
-    type Error = InvalidIndexMethod;
+crate::impl_str_enum!(IndexMethod, [
+    BTree => "btree",
+    Hash => "hash",
+    Gist => "gist",
+    Gin => "gin",
+    Brin => "brin",
+    SpGist => "spgist",
+]);
 
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        match s {
-            "btree" => Ok(Self::BTree),
-            "hash" => Ok(Self::Hash),
-            "gist" => Ok(Self::Gist),
-            "gin" => Ok(Self::Gin),
-            "brin" => Ok(Self::Brin),
-            "spgist" => Ok(Self::SpGist),
-            _ => Err(InvalidIndexMethod(s.to_string())),
-        }
-    }
-}
+crate::impl_str_from_enum!(IndexMethod, InvalidIndexMethod, [
+    "btree" => BTree,
+    "hash" => Hash,
+    "gist" => Gist,
+    "gin" => Gin,
+    "brin" => Brin,
+    "spgist" => SpGist,
+]);
 
 // =============================================================================
 // Comment

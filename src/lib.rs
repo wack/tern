@@ -93,6 +93,78 @@ macro_rules! impl_sql_enum {
     };
 }
 
+/// Implements `as_str()` method for enums with string representations.
+///
+/// This macro generates:
+/// - `as_str(&self) -> &'static str` method
+/// - Returns the string representation for each variant
+///
+/// # Example
+///
+/// ```ignore
+/// impl_str_enum!(MyEnum, [
+///     BTree => "btree",
+///     Hash => "hash",
+/// ]);
+/// ```
+#[macro_export]
+macro_rules! impl_str_enum {
+    (
+        $enum_type:ty,
+        [
+            $($variant:ident => $str:expr),+ $(,)?
+        ]
+    ) => {
+        impl $enum_type {
+            /// Returns the string representation for this variant.
+            #[must_use]
+            pub const fn as_str(&self) -> &'static str {
+                match self {
+                    $(Self::$variant => $str),+
+                }
+            }
+        }
+    };
+}
+
+/// Implements `TryFrom<&str>` trait for enums that parse from strings.
+///
+/// This macro generates:
+/// - `TryFrom<&str>` implementation parsing strings to enum variants
+/// - Error handling with automatic string conversion for the error type
+///
+/// The error type must accept a String in its constructor: `Error(String)`.
+///
+/// # Example
+///
+/// ```ignore
+/// impl_str_from_enum!(MyEnum, MyError, [
+///     "btree" => BTree,
+///     "hash" => Hash,
+/// ]);
+/// ```
+#[macro_export]
+macro_rules! impl_str_from_enum {
+    (
+        $enum_type:ty,
+        $error_type:path,
+        [
+            $($str_val:expr => $variant:ident),+ $(,)?
+        ]
+    ) => {
+        impl TryFrom<&str> for $enum_type {
+            type Error = $error_type;
+
+            fn try_from(s: &str) -> Result<Self, Self::Error> {
+                match s {
+                    $($str_val => Ok(Self::$variant)),+,
+                    _ => Err($error_type(s.to_string())),
+                }
+            }
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
