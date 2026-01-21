@@ -53,20 +53,185 @@ pub use tern_migration_wit::{
 };
 
 // =============================================================================
-// WASI Component Bindings (only for wasm target)
+// WASI Component Bindings
 // =============================================================================
 
-// Note: The wit_bindgen::generate! macro requires the actual WASI WIT files
-// to be present. For now, we provide placeholder implementations that will
-// be completed when the full WASI toolchain is set up.
-//
-// The eventual binding generation will look like:
-//
-// #[cfg(target_family = "wasm")]
-// wit_bindgen::generate!({
-//     path: "../tern-migration-wit/wit",
-//     world: "tern-runner",
-// });
+#[cfg(target_family = "wasm")]
+mod wasm {
+    use super::*;
+
+    // Generate bindings for the runner world
+    wit_bindgen::generate!({
+        path: "../tern-migration-wit/wit",
+        world: "tern-runner",
+        // Export the WASI CLI run function
+        exports: {
+            "wasi:cli/run@0.2.0": RunnerImpl,
+        },
+    });
+
+    /// The runner implementation.
+    pub struct RunnerImpl;
+
+    impl exports::wasi::cli::run::Guest for RunnerImpl {
+        /// Main entry point for the WASI CLI.
+        fn run() -> Result<(), ()> {
+            // Get CLI arguments from WASI environment
+            let args: Vec<String> = wasi::cli::environment::get_arguments();
+
+            // Parse arguments (skip program name if present)
+            let args_slice = if !args.is_empty() && !args[0].starts_with('-') {
+                &args[1..]
+            } else {
+                &args[..]
+            };
+
+            let cli_args = match CliArgs::parse(args_slice) {
+                Ok(args) => args,
+                Err(e) => {
+                    print_stderr(&format!("Error: {}\n", e));
+                    print_stderr("Use --help for usage information.\n");
+                    return Err(());
+                }
+            };
+
+            // Handle help and version
+            if cli_args.help {
+                print_stdout(&help_message());
+                return Ok(());
+            }
+
+            if cli_args.version {
+                print_stdout(&version_string());
+                print_stdout("\n");
+                return Ok(());
+            }
+
+            // Get migration interface
+            let metadata = tern::migration::migration::describe();
+
+            if cli_args.describe {
+                let converted = convert_metadata(&metadata);
+                let output = match cli_args.format {
+                    OutputFormat::Text => format_metadata_text(&converted),
+                    OutputFormat::Json => format_metadata_json(&converted),
+                };
+                print_stdout(&output);
+                return Ok(());
+            }
+
+            if cli_args.show_sql {
+                let statements = tern::migration::migration::get_statements();
+                let converted: Vec<Statement> = statements
+                    .into_iter()
+                    .map(|s| Statement {
+                        sql: s.sql,
+                        description: s.description,
+                        sequence: s.sequence,
+                    })
+                    .collect();
+                let output = match cli_args.format {
+                    OutputFormat::Text => format_statements_text(&converted),
+                    OutputFormat::Json => format_statements_json(&converted),
+                };
+                print_stdout(&output);
+                return Ok(());
+            }
+
+            if cli_args.execute {
+                // Execute the migration
+                print_stdout("Executing migration...\n");
+                match tern::migration::migration::run() {
+                    Ok(()) => {
+                        print_stdout("Migration completed successfully.\n");
+                        Ok(())
+                    }
+                    Err(e) => {
+                        print_stderr(&format!("Migration failed: {}\n", e));
+                        Err(())
+                    }
+                }
+            } else {
+                // Default: describe
+                let converted = convert_metadata(&metadata);
+                let output = match cli_args.format {
+                    OutputFormat::Text => format_metadata_text(&converted),
+                    OutputFormat::Json => format_metadata_json(&converted),
+                };
+                print_stdout(&output);
+                Ok(())
+            }
+        }
+    }
+
+    /// Convert WIT metadata to our internal type.
+    fn convert_metadata(m: &tern::migration::migration::Metadata) -> MigrationMetadata {
+        MigrationMetadata {
+            id: m.id.clone(),
+            description: m.description.clone(),
+            breaking_changes: m
+                .breaking_changes
+                .iter()
+                .map(|bc| BreakingChange {
+                    description: bc.description.clone(),
+                    mitigation: convert_mitigation(&bc.mitigation),
+                    affected_sql: bc.affected_sql.clone(),
+                })
+                .collect(),
+            statement_count: m.statement_count,
+            source_state_hash: m.source_state_hash.clone(),
+            target_state_hash: m.target_state_hash.clone(),
+            compiled_at: m.compiled_at.clone(),
+        }
+    }
+
+    /// Convert WIT mitigation strategy to our internal type.
+    fn convert_mitigation(
+        m: &tern::migration::migration::MitigationStrategy,
+    ) -> MitigationStrategy {
+        use tern::migration::migration::MitigationStrategy as WitMs;
+        match m {
+            WitMs::DualWrite => MitigationStrategy::DualWrite,
+            WitMs::Backfill => MitigationStrategy::Backfill,
+            WitMs::Ratchet => MitigationStrategy::Ratchet,
+            WitMs::Destructive => MitigationStrategy::Destructive,
+        }
+    }
+
+    /// Print to stdout using WASI.
+    fn print_stdout(s: &str) {
+        use wasi::io::streams::StreamError;
+
+        let stdout = wasi::cli::stdout::get_stdout();
+        let bytes = s.as_bytes();
+        let mut offset = 0;
+
+        while offset < bytes.len() {
+            match stdout.blocking_write_and_flush(&bytes[offset..]) {
+                Ok(()) => break,
+                Err(StreamError::Closed) => break,
+                Err(StreamError::LastOperationFailed(_)) => break,
+            }
+        }
+    }
+
+    /// Print to stderr using WASI.
+    fn print_stderr(s: &str) {
+        use wasi::io::streams::StreamError;
+
+        let stderr = wasi::cli::stderr::get_stderr();
+        let bytes = s.as_bytes();
+
+        match stderr.blocking_write_and_flush(bytes) {
+            Ok(()) => {}
+            Err(StreamError::Closed) => {}
+            Err(StreamError::LastOperationFailed(_)) => {}
+        }
+    }
+
+    // Export the component
+    export!(RunnerImpl);
+}
 
 // =============================================================================
 // CLI Types

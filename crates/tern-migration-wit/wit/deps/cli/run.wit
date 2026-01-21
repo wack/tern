@@ -1,0 +1,10 @@
+// Minimal WASI CLI run interface for compilation
+// Based on WASI Preview 2 specification
+
+package wasi:cli@0.2.0;
+
+/// The run interface for WASI CLI commands.
+interface run {
+    /// Run the CLI command and return success/failure.
+    run: func() -> result;
+}

@@ -44,7 +44,130 @@ pub use tern_migration_wit::{
 };
 
 // =============================================================================
-// Types (mirror WIT interface definitions)
+// WASI Component Bindings
+// =============================================================================
+
+#[cfg(target_family = "wasm")]
+mod wasm {
+    // Generate bindings for the guest world
+    wit_bindgen::generate!({
+        path: "../tern-migration-wit/wit",
+        world: "tern-guest",
+        // Export the migration interface
+        exports: {
+            "tern:migration/migration@0.1.0": GuestImpl,
+        },
+    });
+
+    /// The guest implementation that delegates to imported interfaces.
+    pub struct GuestImpl;
+
+    impl exports::tern::migration::migration::Guest for GuestImpl {
+        /// Build metadata from the imported migration-data interface.
+        fn describe() -> exports::tern::migration::migration::Metadata {
+            use tern::migration_data::migration_data;
+
+            // Get breaking changes from data component
+            let data_breaking_changes = migration_data::get_breaking_changes();
+            let breaking_changes: Vec<exports::tern::migration::migration::BreakingChange> =
+                data_breaking_changes
+                    .into_iter()
+                    .map(|bc| exports::tern::migration::migration::BreakingChange {
+                        description: bc.description,
+                        mitigation: convert_mitigation_strategy(bc.mitigation),
+                        affected_sql: bc.affected_sql,
+                    })
+                    .collect();
+
+            exports::tern::migration::migration::Metadata {
+                id: migration_data::get_id(),
+                description: migration_data::get_description(),
+                breaking_changes,
+                statement_count: migration_data::get_statement_count(),
+                source_state_hash: migration_data::get_source_state_hash(),
+                target_state_hash: migration_data::get_target_state_hash(),
+                compiled_at: migration_data::get_compiled_at(),
+            }
+        }
+
+        /// Get all statements from the imported migration-data interface.
+        fn get_statements() -> Vec<exports::tern::migration::migration::Statement> {
+            use tern::migration_data::migration_data;
+
+            let count = migration_data::get_statement_count();
+            (0..count)
+                .map(|i| {
+                    let stmt = migration_data::get_statement(i);
+                    exports::tern::migration::migration::Statement {
+                        sql: stmt.sql,
+                        description: stmt.description,
+                        sequence: stmt.sequence,
+                    }
+                })
+                .collect()
+        }
+
+        /// Execute the migration by iterating statements and calling database.execute().
+        fn run() -> Result<(), String> {
+            use tern::migration::database;
+            use tern::migration::log;
+            use tern::migration_data::migration_data;
+
+            let count = migration_data::get_statement_count();
+
+            for i in 0..count {
+                let stmt = migration_data::get_statement(i);
+
+                // Log progress
+                log::log(
+                    log::Level::Info,
+                    &format!("[{}/{}] {}", stmt.sequence, count, stmt.description),
+                );
+
+                // Execute the statement
+                match database::execute(&stmt.sql) {
+                    Ok(_rows) => {}
+                    Err(e) => {
+                        let error_msg = format!(
+                            "Statement {} failed: {}{}",
+                            stmt.sequence,
+                            e.message,
+                            e.code
+                                .map(|c| format!(" (code: {})", c))
+                                .unwrap_or_default()
+                        );
+                        log::log(log::Level::Error, &error_msg);
+                        return Err(error_msg);
+                    }
+                }
+            }
+
+            log::log(log::Level::Info, "Migration completed successfully");
+            Ok(())
+        }
+    }
+
+    /// Convert mitigation strategy from data format to migration format.
+    fn convert_mitigation_strategy(
+        strategy: tern::migration_data::migration_data::MitigationStrategy,
+    ) -> exports::tern::migration::migration::MitigationStrategy {
+        use exports::tern::migration::migration::MitigationStrategy as ExportMs;
+        use tern::migration_data::migration_data::MitigationStrategy as ImportMs;
+
+        match strategy {
+            ImportMs::DualWrite => ExportMs::DualWrite,
+            ImportMs::Backfill => ExportMs::Backfill,
+            ImportMs::Ratchet => ExportMs::Ratchet,
+            ImportMs::Destructive => ExportMs::Destructive,
+        }
+    }
+
+    // Export the component
+    export!(GuestImpl);
+}
+
+// =============================================================================
+// Native Types (for testing without WASM target)
 // =============================================================================
 
 /// Mitigation strategy for breaking changes.
@@ -236,10 +359,9 @@ impl LogLevel {
 }
 
 // =============================================================================
-// Host Interface (imports from runner/data component)
+// Native Mock Implementations (for testing)
 // =============================================================================
 
-/// Database operations (imported from runner).
 #[cfg(not(target_family = "wasm"))]
 pub mod database {
     use super::DbError;
@@ -278,7 +400,6 @@ pub mod database {
     }
 }
 
-/// Logging operations (imported from runner).
 #[cfg(not(target_family = "wasm"))]
 pub mod log {
     use super::LogLevel;
@@ -323,7 +444,6 @@ pub mod log {
     }
 }
 
-/// Migration data interface (imported from data component).
 #[cfg(not(target_family = "wasm"))]
 pub mod migration_data {
     use super::{BreakingChange, Statement};
@@ -416,7 +536,7 @@ pub mod migration_data {
 }
 
 // =============================================================================
-// Migration Implementation (delegation layer)
+// Native Implementation (for testing)
 // =============================================================================
 
 /// Describe the migration by building metadata from imported data.
@@ -458,33 +578,6 @@ pub fn run() -> Result<(), String> {
     log::info("Migration completed successfully");
     Ok(())
 }
-
-// =============================================================================
-// WASI Component Implementation
-// =============================================================================
-
-// Note: When compiled for wasm32-wasip2, wit-bindgen generates the actual
-// component bindings. For now, we provide the native mock implementations
-// above for testing. The actual WASI implementation will be:
-//
-// #[cfg(target_family = "wasm")]
-// wit_bindgen::generate!({
-//     path: "../tern-migration-wit/wit",
-//     world: "tern-guest",
-// });
-//
-// #[cfg(target_family = "wasm")]
-// struct GuestImpl;
-//
-// #[cfg(target_family = "wasm")]
-// impl exports::tern::migration::migration::Guest for GuestImpl {
-//     fn describe() -> exports::tern::migration::migration::Metadata { ... }
-//     fn get_statements() -> Vec<exports::tern::migration::migration::Statement> { ... }
-//     fn run() -> Result<(), String> { ... }
-// }
-//
-// #[cfg(target_family = "wasm")]
-// export!(GuestImpl);
 
 // =============================================================================
 // Tests
