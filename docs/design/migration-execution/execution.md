@@ -195,12 +195,9 @@ impl MigrationId {
         self.0
     }
 
-    /// Format as a short hex string (first 8 characters / 32 bits).
-    pub fn short(&self) -> String {
-        format!("{:08x}", (self.0 >> 32) as u32)
-    }
-
-    /// Format as full hex string (16 characters / 64 bits).
+    /// Format as a 16-character hexadecimal string.
+    ///
+    /// This is the canonical string representation of a migration ID.
     pub fn to_hex(&self) -> String {
         format!("{:016x}", self.0)
     }
@@ -251,7 +248,9 @@ impl StateHash {
         self.0
     }
 
-    /// Format as full hex string.
+    /// Format as a 16-character hexadecimal string.
+    ///
+    /// This is the canonical string representation of a state hash.
     pub fn to_hex(&self) -> String {
         format!("{:016x}", self.0)
     }
@@ -352,11 +351,27 @@ mod hash_stability_tests {
     }
 
     #[test]
-    fn migration_id_short_format() {
+    fn migration_id_hex_format_is_16_characters() {
         let id = MigrationId::from_raw(0x1234567890abcdef);
-
-        assert_eq!(id.short(), "12345678");
         assert_eq!(id.to_hex(), "1234567890abcdef");
+        assert_eq!(id.to_hex().len(), 16);
+
+        // Zero-padded for small values
+        let small_id = MigrationId::from_raw(0x123);
+        assert_eq!(small_id.to_hex(), "0000000000000123");
+        assert_eq!(small_id.to_hex().len(), 16);
+    }
+
+    #[test]
+    fn state_hash_hex_format_is_16_characters() {
+        let hash = StateHash::from_raw(0xfedcba9876543210);
+        assert_eq!(hash.to_hex(), "fedcba9876543210");
+        assert_eq!(hash.to_hex().len(), 16);
+
+        // Zero-padded for small values
+        let small_hash = StateHash::from_raw(0x42);
+        assert_eq!(small_hash.to_hex(), "0000000000000042");
+        assert_eq!(small_hash.to_hex().len(), 16);
     }
 
     #[test]
@@ -455,11 +470,11 @@ The local file backend stores state in the filesystem, suitable for projects tha
 ```
 .tern/
 ├── state.json              # Current schema state (Namespace)
-├── state.hash              # Current state hash (for quick comparison)
+├── state.hash              # Current state hash (16-character hex)
 └── migrations/
     ├── index.json          # Ordered list of migration IDs
-    ├── 1a2b3c4d.json       # Individual migration files
-    ├── 5e6f7g8h.json
+    ├── 1a2b3c4d5e6f7890.json   # Individual migration files (16-char hex ID)
+    ├── 9876543210fedcba.json
     └── ...
 ```
 
@@ -513,10 +528,10 @@ impl StateBackend for LocalFileBackend {
         migration: &Migration,
         new_state: &Namespace,
     ) -> Result<(), StateError> {
-        // Write migration file
+        // Write migration file (using 16-character hex ID)
         let migration_path = self.root
             .join("migrations")
-            .join(format!("{}.json", migration.id.short()));
+            .join(format!("{}.json", migration.id.to_hex()));
         tokio::fs::write(
             &migration_path,
             serde_json::to_string_pretty(migration)?,
@@ -2109,7 +2124,7 @@ pub async fn run_compile(
         description,
     );
 
-    eprintln!("Migration ID: {}", migration_id.short());
+    eprintln!("Migration ID: {}", migration_id.to_hex());
 
     // Compile to executable
     eprintln!("Compiling migration...");
@@ -2118,7 +2133,7 @@ pub async fn run_compile(
         &target_schema,
         output,
         CompileOptions {
-            id: migration_id.short(),
+            id: migration_id.to_hex(),
             description: description.to_string(),
             target,
         },
@@ -2631,7 +2646,7 @@ futures = "0.3"
 | **4** | 4.1 | Implement `ExecutableBuilder` |
 | | 4.2 | Create high-level `compile_migration` API |
 | **5** | 5.1 | Add `db::state` module structure |
-| | 5.2 | Implement `MigrationId` and `StateHash` types with SHA-256 hashing |
+| | 5.2 | Implement `MigrationId` and `StateHash` types with XxHash3 64-bit |
 | | 5.3 | Implement `Migration` record type |
 | | 5.4 | Define `StateBackend` trait |
 | | 5.5 | Implement `LocalFileBackend` |
