@@ -32,7 +32,7 @@ jobs:
         run: tokei -o json --exclude target | tokei-pie > code-statistics-chart.html
 
       - name: Print code statistics report
-        run: cat tokei-report.json
+        run: tokei --exclude target
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
