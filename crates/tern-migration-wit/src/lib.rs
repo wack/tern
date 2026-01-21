@@ -244,6 +244,10 @@ mod tests {
             "metadata should have description field"
         );
         assert!(
+            content.contains("breaking-changes: list<breaking-change>"),
+            "metadata should have breaking-changes field"
+        );
+        assert!(
             content.contains("statement-count: u32"),
             "metadata should have statement-count field"
         );
@@ -258,17 +262,37 @@ mod tests {
     }
 
     #[test]
-    fn wit_file_contains_warning_types() {
+    fn wit_file_contains_breaking_change_types() {
         let wit_file = Path::new(WIT_PATH).join(MAIN_WIT_FILE);
         let content = std::fs::read_to_string(&wit_file).expect("Should be able to read WIT file");
 
         assert!(
-            content.contains("enum warning-severity"),
-            "WIT file should define warning-severity enum"
+            content.contains("enum mitigation-strategy"),
+            "WIT file should define mitigation-strategy enum"
         );
         assert!(
-            content.contains("record breaking-change-warning"),
-            "WIT file should define breaking-change-warning record"
+            content.contains("dual-write,"),
+            "mitigation-strategy should include dual-write"
+        );
+        assert!(
+            content.contains("backfill,"),
+            "mitigation-strategy should include backfill"
+        );
+        assert!(
+            content.contains("ratchet,"),
+            "mitigation-strategy should include ratchet"
+        );
+        assert!(
+            content.contains("destructive,"),
+            "mitigation-strategy should include destructive"
+        );
+        assert!(
+            content.contains("record breaking-change"),
+            "WIT file should define breaking-change record"
+        );
+        assert!(
+            content.contains("mitigation: mitigation-strategy"),
+            "breaking-change should have mitigation field"
         );
     }
 

@@ -100,26 +100,38 @@ interface log {
 /// Every compiled migration component exports this interface, providing
 /// methods to inspect the migration metadata and execute the migration.
 interface migration {
-    /// Severity level for breaking change warnings.
-    enum warning-severity {
-        /// Informational notice about the change
-        info,
-        /// Warning that requires attention but may be safe
-        warning,
-        /// Critical change that could cause data loss
-        critical,
+    /// Strategy for safely executing a breaking change.
+    ///
+    /// Each breaking change has an associated mitigation strategy that describes
+    /// the pattern needed to execute it without downtime. A schema change is
+    /// either safe (can be deployed directly) or breaking (requires mitigation).
+    enum mitigation-strategy {
+        /// Requires parallel structures with synchronized writes.
+        /// Pattern: add new -> dual-write -> backfill -> switch reads -> switch writes -> drop old.
+        /// Examples: rename column, rename table, change column type.
+        dual-write,
+        /// Requires populating data before completion.
+        /// Pattern: add NOT VALID constraint -> backfill rows -> validate.
+        /// Examples: add NOT NULL to existing column.
+        backfill,
+        /// Requires the NOT VALID + backfill + VALIDATE pattern.
+        /// Pattern: add constraint NOT VALID -> fix existing rows -> VALIDATE CONSTRAINT.
+        /// Examples: add UNIQUE, CHECK, FK, PK constraints.
+        ratchet,
+        /// Intentionally removes data or structure. Irreversible.
+        /// Pattern: verify no references -> drain old instances -> drop.
+        /// Examples: drop table, drop column, remove enum value.
+        destructive,
     }
 
-    /// A warning about a potentially breaking change in the migration.
-    record breaking-change-warning {
+    /// A breaking change that requires mitigation.
+    record breaking-change {
         /// Human-readable description of the breaking change
         description: string,
-        /// Severity level of the warning
-        severity: warning-severity,
-        /// The SQL statement(s) that cause this warning
+        /// Strategy for safely executing this change
+        mitigation: mitigation-strategy,
+        /// The SQL statement(s) that cause this breaking change
         affected-sql: list<string>,
-        /// Suggested mitigation or verification steps
-        mitigation: option<string>,
     }
 
     /// Metadata describing the migration.
@@ -128,8 +140,8 @@ interface migration {
         id: string,
         /// Human-readable description of what this migration does
         description: string,
-        /// List of warnings about breaking changes
-        warnings: list<breaking-change-warning>,
+        /// List of breaking changes that require mitigation
+        breaking-changes: list<breaking-change>,
         /// Total number of SQL statements in this migration
         statement-count: u32,
         /// Hash of the source schema state (before migration)

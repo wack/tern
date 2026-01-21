@@ -22,7 +22,7 @@
 //!     source_state_hash: "def456...",
 //!     target_state_hash: "789ghi...",
 //!     compiled_at: "2024-01-15T10:30:00Z",
-//!     warnings: [],
+//!     breaking_changes: [],
 //!     statements: [
 //!         ("Add email column", "ALTER TABLE users ADD COLUMN email TEXT"),
 //!     ]
@@ -40,25 +40,40 @@ pub use tern_migration_wit::{MAIN_WIT_FILE, WIT_PACKAGE, WIT_PATH, WIT_VERSION};
 
 /// Types and structures for migration metadata.
 pub mod types {
-    /// Severity level for breaking change warnings.
+    /// Strategy for safely executing a breaking change.
+    ///
+    /// Each breaking change has an associated mitigation strategy that describes
+    /// the pattern needed to execute it without downtime. A schema change is
+    /// either safe (can be deployed directly) or breaking (requires mitigation).
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[repr(u8)]
-    pub enum WarningSeverity {
-        /// Informational notice about the change
-        Info = 0,
-        /// Warning that requires attention but may be safe
-        Warning = 1,
-        /// Critical change that could cause data loss
-        Critical = 2,
+    pub enum MitigationStrategy {
+        /// Requires parallel structures with synchronized writes.
+        /// Pattern: add new -> dual-write -> backfill -> switch reads -> switch writes -> drop old.
+        /// Examples: rename column, rename table, change column type.
+        DualWrite = 0,
+        /// Requires populating data before completion.
+        /// Pattern: add NOT VALID constraint -> backfill rows -> validate.
+        /// Examples: add NOT NULL to existing column.
+        Backfill = 1,
+        /// Requires the NOT VALID + backfill + VALIDATE pattern.
+        /// Pattern: add constraint NOT VALID -> fix existing rows -> VALIDATE CONSTRAINT.
+        /// Examples: add UNIQUE, CHECK, FK, PK constraints.
+        Ratchet = 2,
+        /// Intentionally removes data or structure. Irreversible.
+        /// Pattern: verify no references -> drain old instances -> drop.
+        /// Examples: drop table, drop column, remove enum value.
+        Destructive = 3,
     }
 
-    impl WarningSeverity {
+    impl MitigationStrategy {
         /// Convert from a u8 value.
         pub fn from_u8(value: u8) -> Option<Self> {
             match value {
-                0 => Some(Self::Info),
-                1 => Some(Self::Warning),
-                2 => Some(Self::Critical),
+                0 => Some(Self::DualWrite),
+                1 => Some(Self::Backfill),
+                2 => Some(Self::Ratchet),
+                3 => Some(Self::Destructive),
                 _ => None,
             }
         }
@@ -66,45 +81,37 @@ pub mod types {
         /// Convert to a string representation.
         pub fn as_str(&self) -> &'static str {
             match self {
-                Self::Info => "info",
-                Self::Warning => "warning",
-                Self::Critical => "critical",
+                Self::DualWrite => "dual-write",
+                Self::Backfill => "backfill",
+                Self::Ratchet => "ratchet",
+                Self::Destructive => "destructive",
             }
         }
     }
 
-    /// A warning about a potentially breaking change in the migration.
+    /// A breaking change that requires mitigation.
     #[derive(Debug, Clone, PartialEq, Eq)]
-    pub struct BreakingChangeWarning {
+    pub struct BreakingChange {
         /// Human-readable description of the breaking change
         pub description: String,
-        /// Severity level of the warning
-        pub severity: WarningSeverity,
-        /// The SQL statement(s) that cause this warning
+        /// Strategy for safely executing this change
+        pub mitigation: MitigationStrategy,
+        /// The SQL statement(s) that cause this breaking change
         pub affected_sql: Vec<String>,
-        /// Suggested mitigation or verification steps
-        pub mitigation: Option<String>,
     }
 
-    impl BreakingChangeWarning {
-        /// Create a new breaking change warning.
+    impl BreakingChange {
+        /// Create a new breaking change.
         pub fn new(
             description: impl Into<String>,
-            severity: WarningSeverity,
+            mitigation: MitigationStrategy,
             affected_sql: Vec<String>,
         ) -> Self {
             Self {
                 description: description.into(),
-                severity,
+                mitigation,
                 affected_sql,
-                mitigation: None,
             }
-        }
-
-        /// Add a mitigation suggestion.
-        pub fn with_mitigation(mut self, mitigation: impl Into<String>) -> Self {
-            self.mitigation = Some(mitigation.into());
-            self
         }
     }
 
@@ -115,8 +122,8 @@ pub mod types {
         pub id: String,
         /// Human-readable description of what this migration does
         pub description: String,
-        /// List of warnings about breaking changes
-        pub warnings: Vec<BreakingChangeWarning>,
+        /// List of breaking changes that require mitigation
+        pub breaking_changes: Vec<BreakingChange>,
         /// Total number of SQL statements in this migration
         pub statement_count: u32,
         /// Hash of the source schema state (before migration)
@@ -141,7 +148,7 @@ pub mod types {
             Self {
                 id: id.into(),
                 description: description.into(),
-                warnings: Vec::new(),
+                breaking_changes: Vec::new(),
                 statement_count,
                 source_state_hash: source_state_hash.into(),
                 target_state_hash: target_state_hash.into(),
@@ -149,22 +156,27 @@ pub mod types {
             }
         }
 
-        /// Add warnings to the metadata.
-        pub fn with_warnings(mut self, warnings: Vec<BreakingChangeWarning>) -> Self {
-            self.warnings = warnings;
+        /// Add breaking changes to the metadata.
+        pub fn with_breaking_changes(mut self, breaking_changes: Vec<BreakingChange>) -> Self {
+            self.breaking_changes = breaking_changes;
             self
         }
 
-        /// Check if this migration has any warnings.
-        pub fn has_warnings(&self) -> bool {
-            !self.warnings.is_empty()
+        /// Check if this migration has any breaking changes.
+        pub fn has_breaking_changes(&self) -> bool {
+            !self.breaking_changes.is_empty()
         }
 
-        /// Check if this migration has any critical warnings.
-        pub fn has_critical_warnings(&self) -> bool {
-            self.warnings
+        /// Check if this migration has any destructive changes.
+        pub fn has_destructive_changes(&self) -> bool {
+            self.breaking_changes
                 .iter()
-                .any(|w| w.severity == WarningSeverity::Critical)
+                .any(|bc| bc.mitigation == MitigationStrategy::Destructive)
+        }
+
+        /// Check if this migration is safe (no breaking changes).
+        pub fn is_safe(&self) -> bool {
+            self.breaking_changes.is_empty()
         }
     }
 
@@ -493,12 +505,11 @@ pub mod host {
 ///     source_state_hash: "3fa55ab02853d2d983c739392e9e19bc11c1292b56f20abeae00ee7dd0f477b3",
 ///     target_state_hash: "8b7d3c1e2f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c",
 ///     compiled_at: "2024-01-15T10:30:00Z",
-///     warnings: [
+///     breaking_changes: [
 ///         {
 ///             description: "Dropping column 'old_field' may cause data loss",
-///             severity: Warning,
-///             affected_sql: ["ALTER TABLE users DROP COLUMN old_field"],
-///             mitigation: "Ensure no application code depends on 'old_field'"
+///             mitigation: Destructive,
+///             affected_sql: ["ALTER TABLE users DROP COLUMN old_field"]
 ///         }
 ///     ],
 ///     statements: [
@@ -515,7 +526,7 @@ macro_rules! define_migration {
         source_state_hash: $source_hash:expr,
         target_state_hash: $target_hash:expr,
         compiled_at: $compiled_at:expr,
-        warnings: [$($warning:tt)*],
+        breaking_changes: [$($breaking_change:tt)*],
         statements: [$(($stmt_desc:expr, $sql:expr)),* $(,)?]
     ) => {
         /// Generated migration component.
@@ -523,11 +534,11 @@ macro_rules! define_migration {
 
         impl $crate::Migration for GeneratedMigration {
             fn describe(&self) -> $crate::types::Metadata {
-                let warnings = $crate::__parse_warnings!($($warning)*);
+                let breaking_changes = $crate::__parse_breaking_changes!($($breaking_change)*);
                 $crate::types::Metadata {
                     id: $id.to_string(),
                     description: $desc.to_string(),
-                    warnings,
+                    breaking_changes,
                     statement_count: [$($sql),*].len() as u32,
                     source_state_hash: $source_hash.to_string(),
                     target_state_hash: $target_hash.to_string(),
@@ -575,70 +586,50 @@ macro_rules! define_migration {
     };
 }
 
-/// Internal macro for parsing warning definitions.
+/// Internal macro for parsing breaking change definitions.
 #[macro_export]
 #[doc(hidden)]
-macro_rules! __parse_warnings {
+macro_rules! __parse_breaking_changes {
     () => {
         Vec::new()
     };
-    // Variant with mitigation
     (
         {
             description: $desc:expr,
-            severity: $severity:ident,
-            affected_sql: [$($sql:expr),* $(,)?],
-            mitigation: $mitigation:expr
-        }
-        $(, $rest:tt)*
-    ) => {{
-        let mut warnings = Vec::new();
-        let severity = $crate::__parse_severity!($severity);
-        let affected_sql = vec![$($sql.to_string()),*];
-        let warning = $crate::types::BreakingChangeWarning::new(
-            $desc,
-            severity,
-            affected_sql,
-        ).with_mitigation($mitigation);
-        warnings.push(warning);
-        warnings.extend($crate::__parse_warnings!($($rest)*));
-        warnings
-    }};
-    // Variant without mitigation
-    (
-        {
-            description: $desc:expr,
-            severity: $severity:ident,
+            mitigation: $mitigation:ident,
             affected_sql: [$($sql:expr),* $(,)?]
         }
         $(, $rest:tt)*
     ) => {{
-        let mut warnings = Vec::new();
-        let severity = $crate::__parse_severity!($severity);
+        let mut breaking_changes = Vec::new();
+        let mitigation = $crate::__parse_mitigation!($mitigation);
         let affected_sql = vec![$($sql.to_string()),*];
-        let warning = $crate::types::BreakingChangeWarning::new(
+        let breaking_change = $crate::types::BreakingChange::new(
             $desc,
-            severity,
+            mitigation,
             affected_sql,
         );
-        warnings.push(warning);
-        warnings.extend($crate::__parse_warnings!($($rest)*));
-        warnings
+        breaking_changes.push(breaking_change);
+        breaking_changes.extend($crate::__parse_breaking_changes!($($rest)*));
+        breaking_changes
     }};
 }
 
-/// Internal macro for parsing severity levels.
+/// Internal macro for parsing mitigation strategies.
 #[macro_export]
 #[doc(hidden)]
-macro_rules! __parse_severity {
-    (Info) => {
-        $crate::types::WarningSeverity::Info
+macro_rules! __parse_mitigation {
+    (DualWrite) => {
+        $crate::types::MitigationStrategy::DualWrite
     };
-    (Warning) => {
-        $crate::types::WarningSeverity::Warning
+    (Backfill) => {
+        $crate::types::MitigationStrategy::Backfill
     };
-    (Critical) => {
-        $crate::types::WarningSeverity::Critical
+    (Ratchet) => {
+        $crate::types::MitigationStrategy::Ratchet
+    };
+    (Destructive) => {
+        $crate::types::MitigationStrategy::Destructive
     };
 }
 
@@ -700,7 +691,7 @@ pub struct SimpleMigrationBuilder {
     source_state_hash: Option<String>,
     target_state_hash: Option<String>,
     compiled_at: Option<String>,
-    warnings: Vec<types::BreakingChangeWarning>,
+    breaking_changes: Vec<types::BreakingChange>,
     statements: Vec<types::Statement>,
 }
 
@@ -740,9 +731,9 @@ impl SimpleMigrationBuilder {
         self
     }
 
-    /// Add a warning.
-    pub fn warning(mut self, warning: types::BreakingChangeWarning) -> Self {
-        self.warnings.push(warning);
+    /// Add a breaking change.
+    pub fn breaking_change(mut self, breaking_change: types::BreakingChange) -> Self {
+        self.breaking_changes.push(breaking_change);
         self
     }
 
@@ -766,7 +757,7 @@ impl SimpleMigrationBuilder {
         let metadata = types::Metadata {
             id: self.id.expect("id is required"),
             description: self.description.expect("description is required"),
-            warnings: self.warnings,
+            breaking_changes: self.breaking_changes,
             statement_count: self.statements.len() as u32,
             source_state_hash: self
                 .source_state_hash
@@ -795,7 +786,7 @@ impl SimpleMigrationBuilder {
         let metadata = types::Metadata {
             id,
             description,
-            warnings: self.warnings,
+            breaking_changes: self.breaking_changes,
             statement_count: self.statements.len() as u32,
             source_state_hash,
             target_state_hash,
@@ -814,43 +805,49 @@ mod tests {
         use super::*;
 
         #[test]
-        fn warning_severity_from_u8() {
+        fn mitigation_strategy_from_u8() {
             assert_eq!(
-                types::WarningSeverity::from_u8(0),
-                Some(types::WarningSeverity::Info)
+                types::MitigationStrategy::from_u8(0),
+                Some(types::MitigationStrategy::DualWrite)
             );
             assert_eq!(
-                types::WarningSeverity::from_u8(1),
-                Some(types::WarningSeverity::Warning)
+                types::MitigationStrategy::from_u8(1),
+                Some(types::MitigationStrategy::Backfill)
             );
             assert_eq!(
-                types::WarningSeverity::from_u8(2),
-                Some(types::WarningSeverity::Critical)
+                types::MitigationStrategy::from_u8(2),
+                Some(types::MitigationStrategy::Ratchet)
             );
-            assert_eq!(types::WarningSeverity::from_u8(3), None);
-            assert_eq!(types::WarningSeverity::from_u8(255), None);
+            assert_eq!(
+                types::MitigationStrategy::from_u8(3),
+                Some(types::MitigationStrategy::Destructive)
+            );
+            assert_eq!(types::MitigationStrategy::from_u8(4), None);
+            assert_eq!(types::MitigationStrategy::from_u8(255), None);
         }
 
         #[test]
-        fn warning_severity_as_str() {
-            assert_eq!(types::WarningSeverity::Info.as_str(), "info");
-            assert_eq!(types::WarningSeverity::Warning.as_str(), "warning");
-            assert_eq!(types::WarningSeverity::Critical.as_str(), "critical");
+        fn mitigation_strategy_as_str() {
+            assert_eq!(types::MitigationStrategy::DualWrite.as_str(), "dual-write");
+            assert_eq!(types::MitigationStrategy::Backfill.as_str(), "backfill");
+            assert_eq!(types::MitigationStrategy::Ratchet.as_str(), "ratchet");
+            assert_eq!(
+                types::MitigationStrategy::Destructive.as_str(),
+                "destructive"
+            );
         }
 
         #[test]
-        fn breaking_change_warning_construction() {
-            let warning = types::BreakingChangeWarning::new(
+        fn breaking_change_construction() {
+            let bc = types::BreakingChange::new(
                 "Dropping column",
-                types::WarningSeverity::Warning,
+                types::MitigationStrategy::Destructive,
                 vec!["ALTER TABLE t DROP COLUMN c".to_string()],
-            )
-            .with_mitigation("Back up data first");
+            );
 
-            assert_eq!(warning.description, "Dropping column");
-            assert_eq!(warning.severity, types::WarningSeverity::Warning);
-            assert_eq!(warning.affected_sql.len(), 1);
-            assert_eq!(warning.mitigation, Some("Back up data first".to_string()));
+            assert_eq!(bc.description, "Dropping column");
+            assert_eq!(bc.mitigation, types::MitigationStrategy::Destructive);
+            assert_eq!(bc.affected_sql.len(), 1);
         }
 
         #[test]
@@ -867,15 +864,16 @@ mod tests {
             assert_eq!(metadata.id, "abc123");
             assert_eq!(metadata.description, "Test migration");
             assert_eq!(metadata.statement_count, 5);
-            assert!(!metadata.has_warnings());
-            assert!(!metadata.has_critical_warnings());
+            assert!(!metadata.has_breaking_changes());
+            assert!(!metadata.has_destructive_changes());
+            assert!(metadata.is_safe());
         }
 
         #[test]
-        fn metadata_with_warnings() {
-            let warning = types::BreakingChangeWarning::new(
-                "Test warning",
-                types::WarningSeverity::Critical,
+        fn metadata_with_breaking_changes() {
+            let bc = types::BreakingChange::new(
+                "Test change",
+                types::MitigationStrategy::Destructive,
                 vec![],
             );
 
@@ -887,10 +885,34 @@ mod tests {
                 "target_hash",
                 "2024-01-15T10:00:00Z",
             )
-            .with_warnings(vec![warning]);
+            .with_breaking_changes(vec![bc]);
 
-            assert!(metadata.has_warnings());
-            assert!(metadata.has_critical_warnings());
+            assert!(metadata.has_breaking_changes());
+            assert!(metadata.has_destructive_changes());
+            assert!(!metadata.is_safe());
+        }
+
+        #[test]
+        fn metadata_with_non_destructive_breaking_changes() {
+            let bc = types::BreakingChange::new(
+                "Rename column",
+                types::MitigationStrategy::DualWrite,
+                vec![],
+            );
+
+            let metadata = types::Metadata::new(
+                "abc123",
+                "Test migration",
+                5,
+                "source_hash",
+                "target_hash",
+                "2024-01-15T10:00:00Z",
+            )
+            .with_breaking_changes(vec![bc]);
+
+            assert!(metadata.has_breaking_changes());
+            assert!(!metadata.has_destructive_changes());
+            assert!(!metadata.is_safe());
         }
 
         #[test]
@@ -1048,7 +1070,7 @@ mod tests {
             source_state_hash: "source_hash_abc",
             target_state_hash: "target_hash_def",
             compiled_at: "2024-01-15T10:00:00Z",
-            warnings: [],
+            breaking_changes: [],
             statements: [
                 ("Create table", "CREATE TABLE test (id INT)"),
                 ("Add column", "ALTER TABLE test ADD COLUMN name TEXT"),
@@ -1065,7 +1087,8 @@ mod tests {
             assert_eq!(metadata.statement_count, 2);
             assert_eq!(metadata.source_state_hash, "source_hash_abc");
             assert_eq!(metadata.target_state_hash, "target_hash_def");
-            assert!(!metadata.has_warnings());
+            assert!(!metadata.has_breaking_changes());
+            assert!(metadata.is_safe());
         }
 
         #[test]
@@ -1150,58 +1173,59 @@ mod tests {
         }
     }
 
-    mod macro_with_warnings_tests {
+    mod macro_with_breaking_changes_tests {
         use super::*;
 
         define_migration! {
-            id: "warning_migration_id",
-            description: "Migration with warnings",
+            id: "breaking_migration_id",
+            description: "Migration with breaking changes",
             source_state_hash: "source_hash",
             target_state_hash: "target_hash",
             compiled_at: "2024-01-15T10:00:00Z",
-            warnings: [
+            breaking_changes: [
                 {
                     description: "Dropping column causes data loss",
-                    severity: Critical,
-                    affected_sql: ["ALTER TABLE t DROP COLUMN c"],
-                    mitigation: "Back up data first"
+                    mitigation: Destructive,
+                    affected_sql: ["ALTER TABLE t DROP COLUMN c"]
                 },
                 {
-                    description: "Index creation may lock table",
-                    severity: Warning,
-                    affected_sql: ["CREATE INDEX idx ON t(c)"]
+                    description: "Renaming table requires dual-write",
+                    mitigation: DualWrite,
+                    affected_sql: ["ALTER TABLE old_name RENAME TO new_name"]
                 }
             ],
             statements: [
                 ("Drop column", "ALTER TABLE t DROP COLUMN c"),
-                ("Create index", "CREATE INDEX idx ON t(c)"),
+                ("Rename table", "ALTER TABLE old_name RENAME TO new_name"),
             ]
         }
 
         #[test]
-        fn macro_with_warnings_creates_correct_metadata() {
+        fn macro_with_breaking_changes_creates_correct_metadata() {
             let migration = GeneratedMigration;
             let metadata = migration.describe();
 
-            assert!(metadata.has_warnings());
-            assert!(metadata.has_critical_warnings());
-            assert_eq!(metadata.warnings.len(), 2);
+            assert!(metadata.has_breaking_changes());
+            assert!(metadata.has_destructive_changes());
+            assert!(!metadata.is_safe());
+            assert_eq!(metadata.breaking_changes.len(), 2);
 
-            let critical_warning = &metadata.warnings[0];
+            let destructive_change = &metadata.breaking_changes[0];
             assert_eq!(
-                critical_warning.description,
+                destructive_change.description,
                 "Dropping column causes data loss"
             );
-            assert_eq!(critical_warning.severity, types::WarningSeverity::Critical);
-            assert_eq!(critical_warning.affected_sql.len(), 1);
             assert_eq!(
-                critical_warning.mitigation,
-                Some("Back up data first".to_string())
+                destructive_change.mitigation,
+                types::MitigationStrategy::Destructive
             );
+            assert_eq!(destructive_change.affected_sql.len(), 1);
 
-            let warning = &metadata.warnings[1];
-            assert_eq!(warning.severity, types::WarningSeverity::Warning);
-            assert!(warning.mitigation.is_none());
+            let dual_write_change = &metadata.breaking_changes[1];
+            assert_eq!(
+                dual_write_change.mitigation,
+                types::MitigationStrategy::DualWrite
+            );
         }
     }
 
@@ -1230,10 +1254,10 @@ mod tests {
         }
 
         #[test]
-        fn simple_migration_builder_with_warning() {
-            let warning = types::BreakingChangeWarning::new(
-                "Test warning",
-                types::WarningSeverity::Info,
+        fn simple_migration_builder_with_breaking_change() {
+            let bc = types::BreakingChange::new(
+                "Test change",
+                types::MitigationStrategy::Ratchet,
                 vec!["SQL".to_string()],
             );
 
@@ -1243,10 +1267,10 @@ mod tests {
                 .source_state_hash("source")
                 .target_state_hash("target")
                 .compiled_at("2024-01-15T10:00:00Z")
-                .warning(warning)
+                .breaking_change(bc)
                 .build();
 
-            assert!(migration.describe().has_warnings());
+            assert!(migration.describe().has_breaking_changes());
         }
 
         #[test]
