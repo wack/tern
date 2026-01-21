@@ -6,12 +6,26 @@
 //!
 //! # Overview
 //!
-//! The `ExecutableBuilder` takes a compiled Wasm component and produces a
-//! platform-native executable by:
+//! The `ExecutableBuilder` supports two compilation pipelines:
+//!
+//! ## WASI Pipeline (preferred when available)
+//!
+//! When embedded WASI components are available, the builder uses:
+//!
+//! 1. **Data Component Generation**: Creates a WASM component containing SQL data
+//! 2. **Component Composition**: Composes guest + data → migration component
+//! 3. **Component Composition**: Composes runner + migration → WASI CLI app
+//! 4. **AOT Compilation**: Compiles the WASI component to native code
+//!
+//! This approach requires no external tools at runtime.
+//!
+//! ## Cargo Pipeline (fallback)
+//!
+//! When embedded WASI components are not available, the builder falls back to:
 //!
 //! 1. Creating a temporary Cargo project based on the migration runner template
 //! 2. Embedding the Wasm component bytes into the runner
-//! 3. Compiling for the target platform
+//! 3. Compiling for the target platform using `cargo build`
 //! 4. Copying the resulting binary to the output path
 //!
 //! # Example
@@ -33,7 +47,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
+use tracing::{debug, info, warn};
 
+use super::aot::{AotCompiler, AotTarget};
+use super::composer::ComponentComposer;
+use super::data_component::{DataComponentGenerator, MigrationData};
+use super::embedded::{components_available, guest_component, runner_component};
 use super::error::CompileError;
 
 // =============================================================================
@@ -196,7 +215,101 @@ impl ExecutableBuilder {
         PathBuf::from("crates/tern-migration-runner")
     }
 
+    /// Builds a standalone executable from migration data.
+    ///
+    /// This method uses the WASI pipeline when embedded components are available,
+    /// falling back to the cargo-based approach otherwise.
+    ///
+    /// # Arguments
+    ///
+    /// * `migration_data` - The migration data (SQL statements and metadata)
+    /// * `output_path` - Where to write the resulting executable
+    /// * `target` - The target platform to compile for
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if compilation fails.
+    pub fn build_from_data(
+        &self,
+        migration_data: &MigrationData,
+        output_path: &Path,
+        target: Target,
+    ) -> Result<BuildResult, CompileError> {
+        // Try WASI pipeline first if components are available
+        if components_available() {
+            info!("Using WASI pipeline for migration compilation");
+            return self.build_wasi_pipeline(migration_data, output_path, target);
+        }
+
+        // Fall back to cargo-based approach
+        warn!("Embedded WASI components not available, falling back to cargo-based compilation");
+
+        // Generate a minimal component for the cargo approach
+        let generator = DataComponentGenerator::new();
+        let data_component = generator.generate(migration_data)?;
+
+        self.build(&data_component, output_path, target)
+    }
+
+    /// Builds using the WASI pipeline (component composition + AOT).
+    ///
+    /// This method:
+    /// 1. Generates a data component from migration SQL
+    /// 2. Composes guest + data → migration component
+    /// 3. Composes runner + migration → complete WASI CLI app
+    /// 4. AOT compiles to native code
+    fn build_wasi_pipeline(
+        &self,
+        migration_data: &MigrationData,
+        output_path: &Path,
+        target: Target,
+    ) -> Result<BuildResult, CompileError> {
+        debug!("Generating data component");
+        let generator = DataComponentGenerator::new();
+        let data_component = generator.generate(migration_data)?;
+
+        debug!("Loading embedded components");
+        let guest_bytes = guest_component()?;
+        let runner_bytes = runner_component()?;
+
+        debug!("Composing migration component (guest + data)");
+        let composer = ComponentComposer::new()?;
+        let migration_component = composer.compose_migration(guest_bytes, &data_component)?;
+
+        debug!("Composing executable (runner + migration)");
+        let complete_component = composer.compose_executable(runner_bytes, &migration_component)?;
+
+        debug!("AOT compiling to native code");
+        let aot_target = target_to_aot_target(target);
+        let aot_compiler = AotCompiler::for_target(aot_target)?;
+        let aot_result = aot_compiler.compile(&complete_component)?;
+
+        // Save the compiled result
+        debug!("Saving executable to {:?}", output_path);
+        aot_result.save_to_file(output_path)?;
+
+        // Make executable on Unix
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(metadata) = fs::metadata(output_path) {
+                let mut perms = metadata.permissions();
+                perms.set_mode(0o755);
+                let _ = fs::set_permissions(output_path, perms);
+            }
+        }
+
+        Ok(BuildResult {
+            output_path: output_path.to_path_buf(),
+            target,
+            component_size: complete_component.len(),
+        })
+    }
+
     /// Builds a standalone executable from a compiled Wasm component.
+    ///
+    /// This is the legacy cargo-based approach used when WASI components
+    /// are not available.
     ///
     /// # Arguments
     ///
@@ -444,6 +557,17 @@ impl BuildResult {
 // =============================================================================
 // Helper Functions
 // =============================================================================
+
+/// Converts an executable Target to an AOT target.
+fn target_to_aot_target(target: Target) -> AotTarget {
+    match target {
+        Target::Native => AotTarget::Native,
+        Target::X86_64LinuxGnu | Target::X86_64LinuxMusl => AotTarget::X86_64Linux,
+        Target::X86_64MacOS => AotTarget::X86_64MacOS,
+        Target::Aarch64MacOS => AotTarget::Aarch64MacOS,
+        Target::X86_64Windows => AotTarget::X86_64Windows,
+    }
+}
 
 /// Recursively copies a directory.
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), CompileError> {

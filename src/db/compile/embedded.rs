@@ -52,15 +52,13 @@ use super::CompileError;
 ///
 /// # Availability
 ///
-/// This constant is `None` until the runner crate is rewritten for WASI.
-/// Use [`runner_component()`] to access it with proper error handling.
-///
-/// # Future
-///
-/// Will be changed to:
-/// ```ignore
-/// pub const RUNNER_COMPONENT: &[u8] = include_bytes!(env!("TERN_RUNNER_WASM_PATH"));
-/// ```
+/// This constant is `Some` when the WASI components have been compiled during
+/// the build process. Use [`runner_component()`] to access it with proper error
+/// handling.
+#[cfg(feature = "embedded-wasi")]
+pub const RUNNER_COMPONENT: Option<&[u8]> = Some(include_bytes!(env!("TERN_RUNNER_WASM_PATH")));
+
+#[cfg(not(feature = "embedded-wasi"))]
 pub const RUNNER_COMPONENT: Option<&[u8]> = None;
 
 /// Pre-compiled migration guest component (wasm32-wasip2).
@@ -76,15 +74,13 @@ pub const RUNNER_COMPONENT: Option<&[u8]> = None;
 ///
 /// # Availability
 ///
-/// This constant is `None` until the guest crate is rewritten for WASI.
-/// Use [`guest_component()`] to access it with proper error handling.
-///
-/// # Future
-///
-/// Will be changed to:
-/// ```ignore
-/// pub const GUEST_COMPONENT: &[u8] = include_bytes!(env!("TERN_GUEST_WASM_PATH"));
-/// ```
+/// This constant is `Some` when the WASI components have been compiled during
+/// the build process. Use [`guest_component()`] to access it with proper error
+/// handling.
+#[cfg(feature = "embedded-wasi")]
+pub const GUEST_COMPONENT: Option<&[u8]> = Some(include_bytes!(env!("TERN_GUEST_WASM_PATH")));
+
+#[cfg(not(feature = "embedded-wasi"))]
 pub const GUEST_COMPONENT: Option<&[u8]> = None;
 
 // =============================================================================

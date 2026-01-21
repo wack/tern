@@ -59,6 +59,10 @@ pglite-oxide = { version = "0.1", optional = true }
 [features]
 default = ["pglite"]
 pglite = ["dep:pglite-oxide"]
+# Enable embedded WASI components for the new compilation pipeline.
+# This feature is enabled by build.rs when the wasm32-wasip2 target is available
+# and the components have been successfully compiled.
+embedded-wasi = []
 
 [dev-dependencies]
 insta = { version = "1.42", features = ["yaml"] }
