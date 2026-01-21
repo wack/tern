@@ -19,6 +19,8 @@ pub use init::run_init;
 pub use inspect::run_inspect;
 pub use record::run_record;
 pub use schema::run_schema_export;
+#[cfg(feature = "pglite")]
+pub use schema::{run_schema_diff, run_schema_migrate};
 pub use show::run_show;
 pub use status::run_status;
 pub use verify::{run_verify, run_verify_chain};
