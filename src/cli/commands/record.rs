@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use miette::{Context, IntoDiagnostic, miette};
 use serde::Serialize;
 
-use super::{LocalFileBackend, OutputFormat, ensure_backend_initialized, load_backend, print_json};
+use super::{OutputFormat, ensure_backend_initialized, load_backend, print_json};
 use crate::db::state::{Migration, MigrationId, StateBackend, StateHash};
 
 /// Record output for JSON format.

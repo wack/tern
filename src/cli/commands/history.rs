@@ -5,7 +5,7 @@
 use miette::IntoDiagnostic;
 use serde::Serialize;
 
-use super::{LocalFileBackend, OutputFormat, ensure_backend_initialized, load_backend, print_json};
+use super::{OutputFormat, ensure_backend_initialized, load_backend, print_json};
 use crate::db::state::StateBackend;
 
 /// History output for JSON format.

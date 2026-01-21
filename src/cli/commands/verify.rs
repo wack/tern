@@ -6,7 +6,7 @@
 use miette::{Context, IntoDiagnostic};
 use serde::Serialize;
 
-use super::{LocalFileBackend, OutputFormat, ensure_backend_initialized, load_backend, print_json};
+use super::{OutputFormat, ensure_backend_initialized, load_backend, print_json};
 use crate::db::query::PostgresCatalog;
 use crate::db::state::{StateBackend, StateHash, verify_state};
 use crate::db::{self};
