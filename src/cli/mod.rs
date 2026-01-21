@@ -282,6 +282,58 @@ pub enum SchemaAction {
         #[arg(long)]
         path: Option<PathBuf>,
     },
+
+    /// Show diff between current state and edited schema.sql
+    ///
+    /// Compares the current migration state to the edited schema.sql file
+    /// and displays what operations would be needed to transform the schema.
+    /// This is the preview step before generating a migration.
+    #[cfg(feature = "pglite")]
+    Diff {
+        /// Path to the edited schema file (default: .tern/schema.sql)
+        #[arg(short, long)]
+        schema: Option<PathBuf>,
+
+        /// Output format (text shows summary, sql shows migration SQL, json includes metadata)
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+
+        /// Path to the state directory
+        #[arg(long)]
+        path: Option<PathBuf>,
+    },
+
+    /// Generate migration from schema changes
+    ///
+    /// Compares the current migration state to the edited schema.sql file
+    /// and generates a migration that would transform the schema. This is
+    /// the core of the model-first migration workflow.
+    #[cfg(feature = "pglite")]
+    Migrate {
+        /// Path to the edited schema file (default: .tern/schema.sql)
+        #[arg(short, long)]
+        schema: Option<PathBuf>,
+
+        /// Migration description
+        #[arg(short, long)]
+        description: String,
+
+        /// Output format (text shows summary, sql shows migration SQL, json includes metadata)
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+
+        /// Path to the state directory
+        #[arg(long)]
+        path: Option<PathBuf>,
+
+        /// Preview without recording the migration
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Skip confirmation prompt for destructive changes
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 impl CliCommand {
@@ -375,6 +427,31 @@ impl SchemaAction {
                 format,
                 path,
             } => commands::run_schema_export(output, path.as_deref(), format).await,
+            #[cfg(feature = "pglite")]
+            SchemaAction::Diff {
+                schema,
+                format,
+                path,
+            } => commands::run_schema_diff(schema, path.as_deref(), format).await,
+            #[cfg(feature = "pglite")]
+            SchemaAction::Migrate {
+                schema,
+                description,
+                format,
+                path,
+                dry_run,
+                force,
+            } => {
+                commands::run_schema_migrate(
+                    schema,
+                    &description,
+                    path.as_deref(),
+                    format,
+                    dry_run,
+                    force,
+                )
+                .await
+            }
         }
     }
 }

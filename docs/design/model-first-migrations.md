@@ -687,71 +687,117 @@ impl SchemaLoader {
 }
 ```
 
-### Phase 3: Model-First Migration Generation
+### Phase 3: Model-First Migration Generation ✅ COMPLETED
 
 **Goal**: Generate migrations by diffing old and new schema files.
 
+**Status**: Implemented with CLI commands for diffing and migration generation.
+
 **Tasks**:
-1. Add `SchemaLoader` that executes SQL in PGLite and introspects result
-2. Implement full migration generation workflow
-3. Add CLI command `tern schema diff` or extend `tern compile`
-4. Handle destructive change warnings
+1. ✅ Add `SchemaLoader` that executes SQL in PGLite and introspects result (Phase 2)
+2. ✅ Implement full migration generation workflow
+3. ✅ Add CLI commands `tern schema diff` and `tern schema migrate`
+4. ✅ Handle destructive change warnings with user confirmation
+
+**Implementation Summary**:
+- `src/cli/mod.rs`: Added `Diff` and `Migrate` subcommands to `SchemaAction`
+- `src/cli/commands/schema.rs`: Implemented `run_schema_diff` and `run_schema_migrate` handlers
+- Destructive change detection with interactive confirmation prompt
+- Support for multiple output formats (text, json, sql)
+- Dry-run mode for previewing migrations without recording
+
+**Key Features**:
+- **Schema diff preview**: `tern schema diff` shows changes without recording
+- **Migration generation**: `tern schema migrate` creates and records migrations
+- **Breaking change warnings**: Automatically detects destructive operations and prompts for confirmation
+- **Multiple output formats**: Text summary, JSON for automation, SQL for migration script
+- **Dry-run support**: `--dry-run` flag to preview without side effects
+- **Force mode**: `--force` flag to skip confirmation for automated workflows
+
+**CLI Usage**:
+```bash
+# Preview changes (no side effects)
+tern schema diff
+
+# Preview in SQL format
+tern schema diff --format sql
+
+# Generate and record migration
+tern schema migrate --description "Add email column to users"
+
+# Dry run (preview migration without recording)
+tern schema migrate --description "Add email" --dry-run
+
+# Force mode (skip confirmation for destructive changes)
+tern schema migrate --description "Remove legacy table" --force
+```
 
 **Key code paths**:
 ```rust
-// Schema loader
-pub struct SchemaLoader {
-    executor: WorklistExecutor,
-}
+// Schema diff command
+pub async fn run_schema_diff(
+    schema_path: Option<PathBuf>,
+    state_path: Option<&Path>,
+    format: OutputFormat,
+) -> miette::Result<()> {
+    let backend = load_backend(state_path);
+    ensure_backend_initialized(&backend).await?;
 
-impl SchemaLoader {
-    pub async fn load(&self, schema_path: &Path) -> Result<Namespace, Error> {
-        // Create fresh PGLite instance
-        let pglite = PgLite::new_in_memory()?;
+    // Load source state from migrations
+    let source = backend.get_current_state().await?;
 
-        // Execute schema DDL
-        if schema_path.is_file() {
-            let sql = fs::read_to_string(schema_path)?;
-            pglite.execute(&sql).await?;
-        } else if schema_path.is_dir() {
-            let files = glob::glob(&format!("{}/*.sql", schema_path.display()))?;
-            self.executor.execute_files(files.collect()).await?;
-        }
+    // Load target state from edited schema.sql via PGLite
+    let schema_file = schema_path.unwrap_or_else(|| backend.schema_path());
+    let target = SchemaLoader::load_file(&schema_file).await?;
 
-        // Introspect resulting schema
-        let catalog = PgLiteCatalog::new(pglite);
-        load_namespace(&catalog, "public").await
-    }
-}
-
-// Migration generation
-pub async fn generate_migration(
-    backend: &LocalFileBackend,
-    edited_schema_path: &Path,
-) -> Result<Migration, Error> {
-    // Load source (current state from migrations)
-    let source = backend.load_state().await?;
-
-    // Load target (edited schema file)
-    let loader = SchemaLoader::new();
-    let target = loader.load(edited_schema_path).await?;
-
-    // Generate diff and migration
+    // Generate diff
     let diff = diff_namespaces(&source, &target);
+    let analysis = analyze_breaking_changes(&diff);
     let plan = MigrationPlan::from_diff(&diff);
 
-    // Warn about destructive changes
-    if !plan.breaking_changes.is_empty() {
-        warn_destructive_changes(&plan.breaking_changes)?;
+    // Display results based on format
+    // ...
+}
+
+// Schema migrate command
+pub async fn run_schema_migrate(
+    schema_path: Option<PathBuf>,
+    description: &str,
+    state_path: Option<&Path>,
+    format: OutputFormat,
+    dry_run: bool,
+    force: bool,
+) -> miette::Result<()> {
+    // ... load source and target states ...
+
+    let diff = diff_namespaces(&source, &target);
+    let analysis = analyze_breaking_changes(&diff);
+    let plan = MigrationPlan::from_diff(&diff);
+
+    // Check for destructive changes
+    if analysis.has_destructive_changes() && !force && !dry_run {
+        // Display warning and prompt for confirmation
+        if !confirm_destructive_changes()? {
+            return Ok(()); // User cancelled
+        }
     }
 
-    Ok(Migration::new(
-        "Auto-generated from schema changes",
+    // Create migration
+    let migration = Migration::new(
+        description,
         plan.operations,
-        source.hash(),
-        target.hash(),
-        plan.breaking_changes,
-    ))
+        source_hash,
+        target_hash,
+        analysis.into_changes(),
+    );
+
+    // Record migration (unless dry run)
+    if !dry_run {
+        backend.record_migration(&migration, &target).await?;
+    }
+
+    // Output results
+    // ...
 }
 ```
 
