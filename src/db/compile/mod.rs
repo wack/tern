@@ -142,6 +142,7 @@
 //! ```
 
 mod codegen;
+mod composer;
 mod data_component;
 mod embedded;
 mod error;
@@ -150,6 +151,7 @@ mod executable;
 pub use codegen::{
     CompilationResult, CompiledBreakingChange, CompiledStatement, CompilerConfig, MigrationCompiler,
 };
+pub use composer::{ComponentComposer, CompositionConfig};
 pub use data_component::{
     BreakingChangeData, DataComponentGenerator, MigrationData, MitigationStrategy, StatementData,
 };

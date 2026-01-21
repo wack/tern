@@ -2536,24 +2536,14 @@ dependencies = [
 name = "tern-migration-runner"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "clap",
  "miette",
  "pretty_assertions",
- "rustls",
  "serde",
  "serde_json",
- "tempfile",
- "tern-migration-guest",
  "tern-migration-wit",
  "thiserror 2.0.18",
- "tokio",
- "tokio-postgres",
- "tokio-postgres-rustls",
- "tracing",
- "tracing-subscriber",
- "wasmtime",
- "webpki-roots 0.26.11",
+ "wit-bindgen 0.41.0",
 ]
 
 [[package]]
