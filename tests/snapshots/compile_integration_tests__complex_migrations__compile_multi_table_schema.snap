@@ -1,0 +1,23 @@
+---
+source: tests/compile_integration_tests.rs
+expression: summary
+---
+migration_id: d3e0dbd18386adff5ab86918d9b4179b2e619d55502ba4ec3c373e87fff58086
+description: Create e-commerce schema
+statement_count: 5
+has_breaking_changes: false
+has_destructive_changes: false
+source_hash: e493b8e476cf554f
+target_hash: 9954040de2be3161
+breaking_changes: []
+sql_statements:
+  - description: Create enum type public.order_status
+    sql: "CREATE TYPE public.order_status AS ENUM ('pending', 'processing', 'shipped', 'delivered')"
+  - description: Create table public.users
+    sql: "CREATE TABLE public.users (\n    id integer NOT NULL GENERATED ALWAYS AS IDENTITY,\n    email text NOT NULL,\n    created_at timestamp with time zone NOT NULL DEFAULT now(),\n    CONSTRAINT users_pkey PRIMARY KEY (id),\n    CONSTRAINT users_email_key UNIQUE (email)\n)"
+  - description: Create table public.orders
+    sql: "CREATE TABLE public.orders (\n    id integer NOT NULL GENERATED ALWAYS AS IDENTITY,\n    user_id integer NOT NULL,\n    status order_status DEFAULT 'pending',\n    total numeric NOT NULL,\n    created_at timestamp with time zone DEFAULT now(),\n    CONSTRAINT orders_pkey PRIMARY KEY (id),\n    CONSTRAINT orders_total_positive CHECK (total >= 0)\n)"
+  - description: Create index orders_user_id_idx on public.orders
+    sql: CREATE INDEX orders_user_id_idx ON public.orders (user_id)
+  - description: Add constraint orders_user_id_fkey on public.orders
+    sql: ALTER TABLE public.orders ADD CONSTRAINT orders_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users (id) ON DELETE CASCADE

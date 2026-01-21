@@ -283,6 +283,49 @@ tern verify-chain
 
 ---
 
+### Completed: Testing (Phase 7)
+
+Comprehensive integration tests have been implemented for the compilation pipeline and state reconstruction.
+
+#### Implemented Test Files
+
+| Test File | Location | Description |
+|-----------|----------|-------------|
+| Compilation Integration Tests | `tests/compile_integration_tests.rs` | Full compilation pipeline tests |
+| State Reconstruction Tests | `tests/state_reconstruction_tests.rs` | State backend and reconstruction tests |
+
+#### Compilation Integration Tests (32 tests)
+
+- **Simple migrations**: Create table, add column, column with default
+- **Generated source code**: Macro generation, string escaping, snapshot tests
+- **Migration ID determinism**: Same schemas produce same IDs, different descriptions produce different IDs
+- **State hash tests**: Stability, roundtrip, hex encoding
+- **Breaking change detection**: Dropping table/column, adding NOT NULL, unique constraints
+- **Complex migrations**: Multi-table schemas, foreign keys, views and sequences
+- **Low-level API tests**: Manual compilation, compiler config effects
+- **Plan consistency tests**: Statement count verification
+
+#### State Reconstruction Tests (30 tests)
+
+- **Basic operations**: Save/retrieve migrations, atomic recording, state hash tracking
+- **State reconstruction**: Baseline, single migration, migration chains, multiple operations
+- **Chain verification**: Valid chains, empty chains, single migration
+- **Migrations since**: From zero hash, specific hash, latest hash
+- **Persistence**: Data survives across backend instances, sequential file naming
+- **Error handling**: Duplicate migrations, not found, uninitialized backend
+- **Migration properties**: Baseline, checkpoint, regular migration properties
+- **State hash stability**: Empty namespace hash pinned, deterministic hashing
+
+#### Snapshot Tests
+
+Snapshot tests using `cargo-insta` for deterministic output verification:
+- Generated source code structure
+- Compilation summaries (YAML format)
+- SQL extraction
+- State reconstruction summaries
+
+---
+
 ## Remaining Work
 
 ### Architecture Overview
@@ -1032,8 +1075,8 @@ async-trait = "0.1"
 | | 5.2 | Create high-level `compile_migration` API | DONE |
 | **6** | 6.1 | Add CLI commands | DONE |
 | | 6.2 | Implement command handlers | DONE |
-| **7** | 7.1 | Integration tests for compilation | TODO |
-| | 7.2 | Integration tests for state reconstruction | TODO |
+| **7** | 7.1 | Integration tests for compilation | DONE |
+| | 7.2 | Integration tests for state reconstruction | DONE |
 
 ---
 

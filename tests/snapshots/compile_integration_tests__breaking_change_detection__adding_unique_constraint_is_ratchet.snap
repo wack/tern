@@ -1,0 +1,17 @@
+---
+source: tests/compile_integration_tests.rs
+expression: summary
+---
+migration_id: 7cae79df268d6b13086537596a87933783c9fd3e6c1b6a9b239e366072bafc48
+description: Add unique constraint on email
+statement_count: 1
+has_breaking_changes: true
+has_destructive_changes: false
+source_hash: 2991fa039a56bc4c
+target_hash: e77f458df7800a21
+breaking_changes:
+  - description: "Unique constraint 'users_email_key' added to table 'users' on columns (email)"
+    mitigation: Ratchet
+sql_statements:
+  - description: Add constraint users_email_key on public.users
+    sql: ALTER TABLE public.users ADD CONSTRAINT users_email_key UNIQUE (email)
