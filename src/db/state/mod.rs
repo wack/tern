@@ -123,14 +123,22 @@
 //! - Existing migration histories remain valid after upgrades
 
 mod error;
+mod init;
 pub mod local;
 mod types;
 
 pub use error::StateError;
+pub use init::{InitError, init_empty, init_from_database, verify_state};
 pub use local::{DEFAULT_STATE_DIR, LocalFileBackend};
 pub use types::{Migration, MigrationId, MigrationIndex, StateHash};
 
+// Re-export InMemoryBackend for testing in other modules
+#[cfg(test)]
+pub(crate) use tests::InMemoryBackend;
+
 use async_trait::async_trait;
+
+use crate::db::model::Namespace;
 
 /// Trait for migration state storage backends.
 ///
@@ -175,6 +183,52 @@ pub trait StateBackend: Send + Sync {
     /// Returns `StateHash::zero()` if no migrations have been recorded.
     async fn get_current_state_hash(&self) -> Result<StateHash, StateError>;
 
+    /// Gets the current schema state.
+    ///
+    /// Returns the full `Namespace` representing the current schema state.
+    /// This is stored separately from migrations and updated when migrations
+    /// are recorded.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StateError::EmptyHistory` if no migrations have been recorded.
+    async fn get_current_state(&self) -> Result<Namespace, StateError>;
+
+    /// Saves the current schema state.
+    ///
+    /// This stores the full `Namespace` for fast retrieval without needing
+    /// to reconstruct it from the migration history.
+    async fn save_current_state(&self, state: &Namespace) -> Result<(), StateError>;
+
+    /// Records a migration and updates the current state atomically.
+    ///
+    /// This is a convenience method that:
+    /// 1. Saves the migration to the history
+    /// 2. Updates the current state to reflect the migration
+    ///
+    /// This is preferred over calling `save_migration()` and `save_current_state()`
+    /// separately as it ensures atomic updates.
+    async fn record_migration(
+        &self,
+        migration: &Migration,
+        new_state: &Namespace,
+    ) -> Result<(), StateError>;
+
+    /// Gets the schema state at a specific migration.
+    ///
+    /// This reconstructs the schema state as it was after the specified
+    /// migration was applied. For efficiency, it finds the nearest checkpoint
+    /// migration and applies subsequent operations.
+    ///
+    /// # Arguments
+    ///
+    /// * `migration_id` - The ID of the migration to reconstruct state for
+    ///
+    /// # Errors
+    ///
+    /// Returns `StateError::MigrationNotFound` if the migration doesn't exist.
+    async fn get_state_at(&self, migration_id: &MigrationId) -> Result<Namespace, StateError>;
+
     /// Verifies the integrity of the migration chain.
     ///
     /// Checks that each migration's parent hash matches the previous
@@ -201,15 +255,38 @@ mod tests {
     ///
     /// This implementation stores everything in memory and is useful for
     /// testing code that uses `StateBackend` without filesystem access.
-    #[derive(Default)]
     pub struct InMemoryBackend {
         migrations: std::sync::RwLock<Vec<Migration>>,
+        current_state: std::sync::RwLock<Option<Namespace>>,
         initialized: std::sync::atomic::AtomicBool,
+    }
+
+    impl Default for InMemoryBackend {
+        fn default() -> Self {
+            Self {
+                migrations: std::sync::RwLock::new(Vec::new()),
+                current_state: std::sync::RwLock::new(None),
+                initialized: std::sync::atomic::AtomicBool::new(false),
+            }
+        }
     }
 
     impl InMemoryBackend {
         pub fn new() -> Self {
             Self::default()
+        }
+
+        /// Finds the nearest checkpoint migration at or before the given index.
+        fn find_nearest_checkpoint(
+            migrations: &[Migration],
+            target_idx: usize,
+        ) -> Option<(Namespace, usize)> {
+            for (i, migration) in migrations[..=target_idx].iter().enumerate().rev() {
+                if let Some(ref state) = migration.checkpoint_state {
+                    return Some((state.clone(), i + 1));
+                }
+            }
+            None
         }
     }
 
@@ -262,6 +339,54 @@ mod tests {
                 .last()
                 .map(|m| m.resulting_state_hash)
                 .unwrap_or(StateHash::zero()))
+        }
+
+        async fn get_current_state(&self) -> Result<Namespace, StateError> {
+            self.current_state
+                .read()
+                .unwrap()
+                .clone()
+                .ok_or(StateError::EmptyHistory)
+        }
+
+        async fn save_current_state(&self, state: &Namespace) -> Result<(), StateError> {
+            *self.current_state.write().unwrap() = Some(state.clone());
+            Ok(())
+        }
+
+        async fn record_migration(
+            &self,
+            migration: &Migration,
+            new_state: &Namespace,
+        ) -> Result<(), StateError> {
+            self.save_migration(migration).await?;
+            self.save_current_state(new_state).await?;
+            Ok(())
+        }
+
+        async fn get_state_at(&self, migration_id: &MigrationId) -> Result<Namespace, StateError> {
+            let migrations = self.migrations.read().unwrap();
+
+            let target_idx = migrations
+                .iter()
+                .position(|m| m.id == *migration_id)
+                .ok_or(StateError::MigrationNotFound { id: *migration_id })?;
+
+            let (mut state, start_idx) = Self::find_nearest_checkpoint(&migrations, target_idx)
+                .ok_or(StateError::NoCheckpoint {
+                    id: migrations[target_idx].id,
+                })?;
+
+            for migration in &migrations[start_idx..=target_idx] {
+                state = state.apply(&migration.operations).map_err(|e| {
+                    StateError::ReconstructionFailed {
+                        id: migration.id,
+                        message: e.to_string(),
+                    }
+                })?;
+            }
+
+            Ok(state)
         }
 
         async fn verify_chain(&self) -> Result<(), StateError> {

@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use super::StateBackend;
 use super::error::StateError;
 use super::types::{Migration, MigrationId, MigrationIndex, StateHash};
+use crate::db::model::Namespace;
 
 /// Default directory name for tern state.
 pub const DEFAULT_STATE_DIR: &str = ".tern";
@@ -20,12 +21,16 @@ const MIGRATIONS_DIR: &str = "migrations";
 /// Index file name.
 const INDEX_FILE: &str = "index.json";
 
+/// Current state file name.
+const STATE_FILE: &str = "state.json";
+
 /// A state backend that stores migrations on the local filesystem.
 ///
 /// # Directory Structure
 ///
 /// ```text
 /// .tern/
+/// ├── state.json        # Current schema state (Namespace)
 /// └── migrations/
 ///     ├── index.json    # Ordered list of migration IDs + metadata
 ///     ├── 00001.json    # First migration
@@ -40,6 +45,9 @@ const INDEX_FILE: &str = "index.json";
 ///
 /// The index file contains a `MigrationIndex` with the ordered list of
 /// migration IDs, mapping them to their file numbers.
+///
+/// The state file contains the current `Namespace` representing the schema
+/// state after all migrations have been applied.
 #[derive(Debug, Clone)]
 pub struct LocalFileBackend {
     /// Root directory for tern state (typically `.tern/`).
@@ -82,6 +90,11 @@ impl LocalFileBackend {
     /// Returns the path to the migration index file.
     fn index_path(&self) -> PathBuf {
         self.migrations_dir().join(INDEX_FILE)
+    }
+
+    /// Returns the path to the current state file.
+    fn state_path(&self) -> PathBuf {
+        self.root.join(STATE_FILE)
     }
 
     /// Returns the path to a migration file by sequence number.
@@ -178,6 +191,51 @@ impl LocalFileBackend {
             source,
         })
     }
+
+    /// Reads the current state from disk.
+    fn read_state(&self) -> Result<Namespace, StateError> {
+        let state_path = self.state_path();
+
+        if !state_path.exists() {
+            return Err(StateError::EmptyHistory);
+        }
+
+        let content = std::fs::read_to_string(&state_path)
+            .map_err(|source| StateError::ReadState { source })?;
+
+        serde_json::from_str(&content).map_err(|source| StateError::InvalidStateJson { source })
+    }
+
+    /// Writes the current state to disk.
+    fn write_state(&self, state: &Namespace) -> Result<(), StateError> {
+        let state_path = self.state_path();
+        let content = serde_json::to_string_pretty(state)
+            .map_err(|source| StateError::SerializeState { source })?;
+
+        std::fs::write(&state_path, content).map_err(|source| StateError::WriteState { source })
+    }
+
+    /// Finds the nearest checkpoint migration at or before the given index.
+    ///
+    /// Returns the checkpoint state and the index to start applying operations from.
+    fn find_nearest_checkpoint(
+        &self,
+        migrations: &[Migration],
+        target_idx: usize,
+    ) -> Result<(Namespace, usize), StateError> {
+        // Search backwards from target for a checkpoint
+        for (i, migration) in migrations[..=target_idx].iter().enumerate().rev() {
+            if let Some(ref state) = migration.checkpoint_state {
+                // Found a checkpoint - start applying from the next migration
+                return Ok((state.clone(), i + 1));
+            }
+        }
+
+        // No checkpoint found - this shouldn't happen if baseline was created properly
+        Err(StateError::NoCheckpoint {
+            id: migrations[target_idx].id,
+        })
+    }
 }
 
 #[async_trait]
@@ -262,6 +320,64 @@ impl StateBackend for LocalFileBackend {
         // Read the last migration
         let last_migration = self.read_migration_by_number(index.len())?;
         Ok(last_migration.resulting_state_hash)
+    }
+
+    async fn get_current_state(&self) -> Result<Namespace, StateError> {
+        if !self.is_initialized_sync() {
+            return Err(StateError::NotInitialized {
+                path: self.root.clone(),
+            });
+        }
+        self.read_state()
+    }
+
+    async fn save_current_state(&self, state: &Namespace) -> Result<(), StateError> {
+        if !self.is_initialized_sync() {
+            return Err(StateError::NotInitialized {
+                path: self.root.clone(),
+            });
+        }
+        self.write_state(state)
+    }
+
+    async fn record_migration(
+        &self,
+        migration: &Migration,
+        new_state: &Namespace,
+    ) -> Result<(), StateError> {
+        // Save the migration first
+        self.save_migration(migration).await?;
+
+        // Then update the current state
+        self.save_current_state(new_state).await?;
+
+        Ok(())
+    }
+
+    async fn get_state_at(&self, migration_id: &MigrationId) -> Result<Namespace, StateError> {
+        let migrations = self.get_all_migrations().await?;
+
+        // Find target migration index
+        let target_idx = migrations
+            .iter()
+            .position(|m| m.id == *migration_id)
+            .ok_or(StateError::MigrationNotFound { id: *migration_id })?;
+
+        // Find nearest checkpoint and apply operations
+        let (mut state, start_idx) = self.find_nearest_checkpoint(&migrations, target_idx)?;
+
+        // Apply operations from checkpoint to target (exclusive of checkpoint migration itself
+        // since its state is already included)
+        for migration in &migrations[start_idx..=target_idx] {
+            state = state.apply(&migration.operations).map_err(|e| {
+                StateError::ReconstructionFailed {
+                    id: migration.id,
+                    message: e.to_string(),
+                }
+            })?;
+        }
+
+        Ok(state)
     }
 
     async fn verify_chain(&self) -> Result<(), StateError> {
