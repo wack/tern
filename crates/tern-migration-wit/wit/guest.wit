@@ -1,0 +1,65 @@
+// Tern Migration Guest World Definition
+//
+// The guest component is a pure delegation layer that:
+// - Imports migration data from the data component
+// - Imports database and log interfaces from the runner
+// - Exports the migration interface for the runner to call
+//
+// Architecture:
+//   ┌─────────────────────────────────────────────────────────────┐
+//   │                    Guest Component                          │
+//   │                                                             │
+//   │  Imports:                                                   │
+//   │    - tern:migration-data/migration-data (from data comp)    │
+//   │    - tern:migration/database (from runner)                  │
+//   │    - tern:migration/log (from runner)                       │
+//   │                                                             │
+//   │  Exports:                                                   │
+//   │    - tern:migration/migration                               │
+//   │                                                             │
+//   │  Implementation:                                            │
+//   │    describe() -> builds metadata from migration-data        │
+//   │    get-statements() -> returns all statements from data     │
+//   │    run() -> iterates statements, calls database.execute()   │
+//   │                                                             │
+//   └─────────────────────────────────────────────────────────────┘
+//
+// Composition Flow:
+//   1. Data component provides migration-data interface
+//   2. Guest component imports migration-data, exports migration
+//   3. Runner component imports migration, provides database/log
+//   4. Final composed component is a complete migration executable
+
+package tern:guest@0.1.0;
+
+/// World definition for the migration guest component.
+///
+/// The guest is compiled to wasm32-wasip2 and embedded in the Tern binary.
+/// At migration compilation time, it is composed with a data component
+/// (which provides the SQL statements) to create a migration component.
+world tern-guest {
+    /// Import migration data from the data component.
+    /// This is satisfied at composition time when guest + data are composed.
+    import tern:migration-data/migration-data@0.1.0;
+
+    /// Import database operations from the runner.
+    /// This is satisfied when runner + migration are composed.
+    import tern:migration/database@0.1.0;
+
+    /// Import logging from the runner.
+    /// This is satisfied when runner + migration are composed.
+    import tern:migration/log@0.1.0;
+
+    /// Export the migration interface.
+    /// This is used by the runner to describe/execute the migration.
+    export tern:migration/migration@0.1.0;
+}
+
+/// Minimal guest world for testing without full interface dependencies.
+world tern-guest-minimal {
+    /// Only import migration data for basic testing.
+    import tern:migration-data/migration-data@0.1.0;
+
+    /// Simple entry point for testing.
+    export test-describe: func() -> string;
+}

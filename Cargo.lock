@@ -2528,6 +2528,7 @@ dependencies = [
 name = "tern-migration-guest"
 version = "0.1.0"
 dependencies = [
+ "pretty_assertions",
  "tern-migration-wit",
  "wit-bindgen 0.41.0",
 ]

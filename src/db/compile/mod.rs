@@ -141,6 +141,7 @@
 //! )?;
 //! ```
 
+mod aot;
 mod codegen;
 mod composer;
 mod data_component;
@@ -148,6 +149,7 @@ mod embedded;
 mod error;
 mod executable;
 
+pub use aot::{AotCompiler, AotOutput, AotResult, AotTarget};
 pub use codegen::{
     CompilationResult, CompiledBreakingChange, CompiledStatement, CompilerConfig, MigrationCompiler,
 };

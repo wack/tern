@@ -2,8 +2,14 @@
 name = "tern-migration-guest"
 version = "0.1.0"
 edition = "2024"
-description = "Guest bindings for Tern migration WebAssembly components"
+description = "WASI guest component that delegates migration execution to embedded data"
 license = "MIT"
+
+# Build as a WASI component library
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "tern_migration_guest"
+path = "src/lib.rs"
 
 [dependencies]
 # WIT definitions from the sister crate
@@ -14,13 +20,8 @@ tern-migration-wit = { path = "../tern-migration-wit" }
 wit-bindgen = "0.41"
 
 [dev-dependencies]
-# No dev-dependencies needed - tests use standard assert_eq
-# Note: pretty_assertions conflicts with macro-generated code that uses glob imports
+pretty_assertions = "1.4"
 
 [features]
 # Default features for typical usage
 default = []
-
-# Enable this feature when compiling for WebAssembly target
-# This enables the actual component model bindings
-wasm = []

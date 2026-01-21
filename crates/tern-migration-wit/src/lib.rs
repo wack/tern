@@ -23,8 +23,10 @@
 //! ```text
 //! crates/tern-migration-wit/
 //! └── wit/
-//!     ├── migration.wit    # Migration component interface definitions
-//!     └── runner.wit       # Runner component (WASI CLI) world definition
+//!     ├── migration.wit       # Migration component interface definitions
+//!     ├── migration-data.wit  # Data interface for SQL statements
+//!     ├── guest.wit           # Guest component world definition
+//!     └── runner.wit          # Runner component (WASI CLI) world definition
 //! ```
 //!
 //! # Usage
@@ -91,6 +93,12 @@ pub const MAIN_WIT_FILE: &str = "migration.wit";
 /// The WIT file name for the runner component.
 pub const RUNNER_WIT_FILE: &str = "runner.wit";
 
+/// The WIT file name for the guest component.
+pub const GUEST_WIT_FILE: &str = "guest.wit";
+
+/// The WIT file name for migration data interface.
+pub const MIGRATION_DATA_WIT_FILE: &str = "migration-data.wit";
+
 /// Current version of the WIT interface.
 pub const WIT_VERSION: &str = "0.1.0";
 
@@ -99,6 +107,12 @@ pub const WIT_PACKAGE: &str = "tern:migration@0.1.0";
 
 /// Package identifier for the runner interface.
 pub const RUNNER_WIT_PACKAGE: &str = "tern:runner@0.1.0";
+
+/// Package identifier for the guest interface.
+pub const GUEST_WIT_PACKAGE: &str = "tern:guest@0.1.0";
+
+/// Package identifier for the migration-data interface.
+pub const MIGRATION_DATA_WIT_PACKAGE: &str = "tern:migration-data@0.1.0";
 
 #[cfg(test)]
 mod tests {
@@ -382,5 +396,110 @@ mod tests {
     #[test]
     fn runner_wit_version_matches_package() {
         assert_eq!(RUNNER_WIT_PACKAGE, format!("tern:runner@{}", WIT_VERSION));
+    }
+
+    #[test]
+    fn guest_wit_file_exists() {
+        let wit_file = Path::new(WIT_PATH).join(GUEST_WIT_FILE);
+        assert!(
+            wit_file.exists(),
+            "Guest WIT file should exist at: {}",
+            wit_file.display()
+        );
+    }
+
+    #[test]
+    fn guest_wit_file_contains_package_declaration() {
+        let wit_file = Path::new(WIT_PATH).join(GUEST_WIT_FILE);
+        let content =
+            std::fs::read_to_string(&wit_file).expect("Should be able to read guest WIT file");
+
+        assert!(
+            content.contains("package tern:guest@0.1.0"),
+            "Guest WIT file should contain package declaration"
+        );
+    }
+
+    #[test]
+    fn guest_wit_file_contains_world_definition() {
+        let wit_file = Path::new(WIT_PATH).join(GUEST_WIT_FILE);
+        let content =
+            std::fs::read_to_string(&wit_file).expect("Should be able to read guest WIT file");
+
+        assert!(
+            content.contains("world tern-guest"),
+            "Guest WIT file should define tern-guest world"
+        );
+        assert!(
+            content.contains("import tern:migration-data/migration-data"),
+            "Guest world should import migration-data interface"
+        );
+        assert!(
+            content.contains("export tern:migration/migration"),
+            "Guest world should export migration interface"
+        );
+    }
+
+    #[test]
+    fn guest_wit_version_matches_package() {
+        assert_eq!(GUEST_WIT_PACKAGE, format!("tern:guest@{}", WIT_VERSION));
+    }
+
+    #[test]
+    fn migration_data_wit_file_exists() {
+        let wit_file = Path::new(WIT_PATH).join(MIGRATION_DATA_WIT_FILE);
+        assert!(
+            wit_file.exists(),
+            "Migration data WIT file should exist at: {}",
+            wit_file.display()
+        );
+    }
+
+    #[test]
+    fn migration_data_wit_file_contains_package_declaration() {
+        let wit_file = Path::new(WIT_PATH).join(MIGRATION_DATA_WIT_FILE);
+        let content = std::fs::read_to_string(&wit_file)
+            .expect("Should be able to read migration-data WIT file");
+
+        assert!(
+            content.contains("package tern:migration-data@0.1.0"),
+            "Migration data WIT file should contain package declaration"
+        );
+    }
+
+    #[test]
+    fn migration_data_wit_file_contains_interface() {
+        let wit_file = Path::new(WIT_PATH).join(MIGRATION_DATA_WIT_FILE);
+        let content = std::fs::read_to_string(&wit_file)
+            .expect("Should be able to read migration-data WIT file");
+
+        assert!(
+            content.contains("interface migration-data"),
+            "Migration data WIT file should define migration-data interface"
+        );
+        assert!(
+            content.contains("get-id: func() -> string"),
+            "migration-data should have get-id function"
+        );
+        assert!(
+            content.contains("get-description: func() -> string"),
+            "migration-data should have get-description function"
+        );
+        assert!(
+            content.contains("get-statement-count: func() -> u32"),
+            "migration-data should have get-statement-count function"
+        );
+        assert!(
+            content.contains("get-statement: func(index: u32) -> statement"),
+            "migration-data should have get-statement function"
+        );
+    }
+
+    #[test]
+    fn migration_data_wit_version_matches_package() {
+        assert_eq!(
+            MIGRATION_DATA_WIT_PACKAGE,
+            format!("tern:migration-data@{}", WIT_VERSION)
+        );
     }
 }

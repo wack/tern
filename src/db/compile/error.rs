@@ -207,6 +207,14 @@ pub enum CompileError {
         /// The error message.
         message: String,
     },
+
+    /// AOT compilation failed.
+    #[error("AOT compilation failed: {message}")]
+    #[diagnostic(code(tern::compile::aot_error))]
+    AotError {
+        /// The error message.
+        message: String,
+    },
 }
 
 impl CompileError {
@@ -354,6 +362,13 @@ impl CompileError {
             message: message.into(),
         }
     }
+
+    /// Create an AOT compilation error.
+    pub fn aot(message: impl Into<String>) -> Self {
+        Self::AotError {
+            message: message.into(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -495,6 +510,15 @@ mod tests {
         assert_eq!(
             format!("{}", err),
             "failed to generate data component: invalid metadata"
+        );
+    }
+
+    #[test]
+    fn aot_error_display() {
+        let err = CompileError::aot("serialization failed");
+        assert_eq!(
+            format!("{}", err),
+            "AOT compilation failed: serialization failed"
         );
     }
 }
