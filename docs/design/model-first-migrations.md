@@ -533,15 +533,23 @@ let namespace = load_namespace(&catalog, "public").await?;
 
 ## Implementation Plan
 
-### Phase 1: Schema Export
+### Phase 1: Schema Export ✅ COMPLETED
 
 **Goal**: Generate `.tern/schema.sql` from the current state.
 
+**Status**: Implemented in commit 5bbfb35.
+
 **Tasks**:
-1. Add `SchemaExporter` that converts `Namespace` → SQL DDL
-2. Extend `LocalFileBackend` with `export_schema()` method
-3. Auto-generate schema file when migrations are applied
-4. Add CLI command `tern schema export` for manual regeneration
+1. ✅ Add `SchemaExporter` that converts `Namespace` → SQL DDL
+2. ✅ Extend `LocalFileBackend` with `export_schema()` method
+3. ✅ Auto-generate schema file when migrations are applied
+4. ✅ Add CLI command `tern schema export` for manual regeneration
+
+**Implementation Summary**:
+- `src/db/state/exporter.rs`: `SchemaExporter` module that reuses existing diff/plan/render infrastructure
+- `src/db/state/local.rs`: Added `export_schema()` method and auto-regeneration in `record_migration()`
+- `src/cli/commands/schema.rs`: CLI handler for `tern schema export`
+- `src/cli/mod.rs`: Added `Schema` subcommand with `Export` action
 
 **Key code paths**:
 ```rust
