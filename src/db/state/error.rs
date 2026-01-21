@@ -171,6 +171,62 @@ pub enum StateError {
         #[source]
         source: std::io::Error,
     },
+
+    /// Failed to read current state.
+    #[error("failed to read current state: {source}")]
+    #[diagnostic(code(tern::state::read_state))]
+    ReadState {
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// Failed to write current state.
+    #[error("failed to write current state: {source}")]
+    #[diagnostic(code(tern::state::write_state))]
+    WriteState {
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// Failed to parse state JSON.
+    #[error("invalid state JSON: {source}")]
+    #[diagnostic(code(tern::state::invalid_state_json))]
+    InvalidStateJson {
+        #[source]
+        source: serde_json::Error,
+    },
+
+    /// Failed to serialize state to JSON.
+    #[error("failed to serialize state: {source}")]
+    #[diagnostic(code(tern::state::serialize_state))]
+    SerializeState {
+        #[source]
+        source: serde_json::Error,
+    },
+
+    /// Failed to apply operations during state reconstruction.
+    #[error("failed to reconstruct state at migration {id}: {message}")]
+    #[diagnostic(
+        code(tern::state::reconstruction_failed),
+        help("The migration history may be corrupted or incompatible")
+    )]
+    ReconstructionFailed {
+        /// The migration where reconstruction failed.
+        id: MigrationId,
+        /// Error message describing the failure.
+        message: String,
+    },
+
+    /// No checkpoint found for state reconstruction.
+    #[error("no checkpoint found before migration {id}")]
+    #[diagnostic(
+        code(tern::state::no_checkpoint),
+        help("Consider creating a baseline migration with a checkpoint")
+    )]
+    NoCheckpoint {
+        /// The migration that has no prior checkpoint.
+        id: MigrationId,
+    },
 }
 
 impl From<std::io::Error> for StateError {
