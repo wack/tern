@@ -108,51 +108,26 @@ pub enum ForeignKeyAction {
     SetDefault,
 }
 
-impl ForeignKeyAction {
-    /// Returns the single-character code used by PostgreSQL.
-    #[must_use]
-    pub const fn as_char(&self) -> char {
-        match self {
-            Self::NoAction => 'a',
-            Self::Restrict => 'r',
-            Self::Cascade => 'c',
-            Self::SetNull => 'n',
-            Self::SetDefault => 'd',
-        }
-    }
-
-    /// Returns the SQL keyword for this action.
-    #[must_use]
-    pub const fn as_sql(&self) -> &'static str {
-        match self {
-            Self::NoAction => "NO ACTION",
-            Self::Restrict => "RESTRICT",
-            Self::Cascade => "CASCADE",
-            Self::SetNull => "SET NULL",
-            Self::SetDefault => "SET DEFAULT",
-        }
-    }
-}
-
 /// Error returned when parsing an invalid foreign key action character.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid foreign key action: '{0}'")]
 pub struct InvalidForeignKeyAction(pub char);
 
-impl TryFrom<char> for ForeignKeyAction {
-    type Error = InvalidForeignKeyAction;
+crate::impl_char_enum!(ForeignKeyAction, InvalidForeignKeyAction, [
+    NoAction => 'a',
+    Restrict => 'r',
+    Cascade => 'c',
+    SetNull => 'n',
+    SetDefault => 'd',
+]);
 
-    fn try_from(c: char) -> Result<Self, Self::Error> {
-        match c {
-            'a' => Ok(Self::NoAction),
-            'r' => Ok(Self::Restrict),
-            'c' => Ok(Self::Cascade),
-            'n' => Ok(Self::SetNull),
-            'd' => Ok(Self::SetDefault),
-            _ => Err(InvalidForeignKeyAction(c)),
-        }
-    }
-}
+crate::impl_sql_enum!(ForeignKeyAction, [
+    NoAction => "NO ACTION",
+    Restrict => "RESTRICT",
+    Cascade => "CASCADE",
+    SetNull => "SET NULL",
+    SetDefault => "SET DEFAULT",
+]);
 
 // =============================================================================
 // Index Method
