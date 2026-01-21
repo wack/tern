@@ -4,6 +4,27 @@
 
 This document describes the design for a "model-first" migration workflow in Tern, allowing users to define their desired database schema declaratively in SQL and have Tern automatically generate migrations by diffing the old and new schema definitions.
 
+### Core Concept
+
+The fundamental insight behind this feature is that a database schema can be represented in two equivalent ways:
+
+1. **As a sequence of changes** (migrations): "Create table X, then add column Y, then add index Z"
+2. **As a snapshot** (DDL): "The database has table X with columns A, B, C and index Z"
+
+These representations are mathematically equivalent—applying all migrations to an empty database produces the snapshot, and diffing two snapshots produces the migrations needed to transform one into the other.
+
+Currently, Tern works primarily with the first representation (migrations). This feature adds first-class support for the second representation (a schema file), enabling users to express their intent declaratively rather than imperatively.
+
+### What is the Schema File?
+
+The schema file (`.tern/schema.sql`) is a SQL DDL script that, if executed against an empty database, would produce exactly the schema that results from applying all migrations in sequence. It is:
+
+- **A computed artifact**: Generated from the migration history, not manually maintained as a source of truth
+- **Human-readable and editable**: Plain SQL that any database developer can understand and modify
+- **The interface for schema changes**: Users edit this file to express desired changes, rather than writing migrations directly
+
+Think of it as analogous to a "compiled" view of the migrations—similar to how a `package-lock.json` is derived from `package.json`, except here the schema file is the user-facing interface and migrations are the derived output.
+
 ## Motivation
 
 ### Current Workflow (Problem)
@@ -15,32 +36,248 @@ The current Tern workflow requires users to:
 3. Invoke Tern to capture the diff between the live schema and Tern's saved state
 4. Tern generates a migration based on this diff
 
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Current Workflow (Problem)                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  Developer                     Local PostgreSQL                    Tern
+  ─────────                     ────────────────                    ────
+      │                               │                               │
+      │  1. Start local database      │                               │
+      │  ─────────────────────────►   │                               │
+      │                               │                               │
+      │  2. Apply existing migrations │                               │
+      │  ─────────────────────────────────────────────────────────►   │
+      │                               │   ◄──── execute SQL ────────  │
+      │                               │                               │
+      │  3. Manually alter schema     │                               │
+      │  (psql, GUI, raw SQL)         │                               │
+      │  ─────────────────────────►   │                               │
+      │                               │                               │
+      │  4. Capture diff              │                               │
+      │  ─────────────────────────────────────────────────────────►   │
+      │                               │   ◄──── introspect ─────────  │
+      │                               │                               │
+      │   ◄──── migration file ───────────────────────────────────    │
+      │                               │                               │
+```
+
 This workflow is cumbersome because:
 
-- **Redundant manual work**: Users manually perform schema changes that Tern then reverse-engineers into migrations
-- **Requires a running database**: Users must maintain a local PostgreSQL instance
-- **Error-prone**: Manual schema modifications can introduce inconsistencies
-- **Poor developer experience**: The workflow is unintuitive for developers accustomed to Django, Rails, or similar frameworks
+- **Redundant manual work**: Users manually perform schema changes (ALTER TABLE, CREATE INDEX, etc.) that Tern then reverse-engineers into migrations. The user is essentially doing Tern's job twice.
+- **Requires a running database**: Users must install, configure, and maintain a local PostgreSQL instance just to make schema changes.
+- **Error-prone**: Manual schema modifications via ad-hoc SQL commands can introduce inconsistencies, typos, or unintended changes that are then captured in migrations.
+- **Poor developer experience**: The workflow is unintuitive for developers accustomed to Django, Rails, or similar frameworks where you edit a model definition and the framework generates migrations.
+- **Context switching**: Developers must switch between their editor (for application code), a database client (for schema changes), and the command line (for Tern commands).
+
+### Inspiration: Django's Model-First Approach
+
+Django's migration system exemplifies the "model-first" pattern:
+
+1. Developer edits Python model classes (e.g., adds a field to a Django model)
+2. Developer runs `python manage.py makemigrations`
+3. Django compares the current model definitions to the previous state
+4. Django generates a migration file representing the diff
+
+The key insight is that **the model definition is the source of truth**, and migrations are derived from changes to that definition. Developers think in terms of "what I want the schema to look like," not "what SQL commands to run."
 
 ### Proposed Workflow (Solution)
 
-Inspired by Django's "model-first" approach:
+This feature brings Django-style model-first development to Tern:
 
 1. Tern maintains a **schema file** (`.tern/schema.sql`) representing the current database schema as SQL DDL
 2. User **edits the schema file** directly to express their desired schema changes
 3. Tern **diffs the old schema against the new** to generate a migration
 4. The schema file is **automatically regenerated** after migrations are applied
 
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Proposed Workflow (Solution)                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  Developer                     Tern                           (No external DB!)
+  ─────────                     ────                           ────────────────
+      │                           │
+      │  1. Edit schema.sql       │
+      │  (add column, table, etc) │
+      │                           │
+      │  2. Run: tern schema diff │
+      │  ────────────────────►    │
+      │                           │  ┌─────────────────────────────────────┐
+      │                           │  │  Internally:                        │
+      │                           │  │  • Load old schema into PGLite #1   │
+      │                           │  │  • Load new schema into PGLite #2   │
+      │                           │  │  • Diff the two schemas             │
+      │                           │  │  • Generate migration               │
+      │                           │  └─────────────────────────────────────┘
+      │                           │
+      │   ◄── shows diff ─────────│
+      │                           │
+      │  3. Run: tern schema migrate
+      │  ────────────────────►    │
+      │                           │
+      │   ◄── migration created ──│
+      │                           │
+```
+
 This workflow provides:
 
-- **Declarative schema definition**: Users express "what" they want, not "how" to get there
-- **Familiar interface**: SQL DDL is universally understood by database developers
-- **No running database required** (for basic operations): Tern uses an embedded PGLite instance
-- **Natural version control**: Schema changes are visible as SQL diffs in pull requests
+- **Declarative schema definition**: Users express "what" they want, not "how" to get there. Instead of writing `ALTER TABLE users ADD COLUMN email VARCHAR(255)`, they simply add `email VARCHAR(255)` to the table definition in schema.sql.
+- **Familiar interface**: SQL DDL is universally understood by database developers. There's no new DSL to learn—if you know PostgreSQL, you know how to use this feature.
+- **No running database required** (for basic operations): Tern uses an embedded PGLite instance to execute and introspect schemas. Users don't need to install or manage PostgreSQL locally.
+- **Natural version control**: While the schema file itself isn't committed (it's regenerated from migrations), the migrations it produces show clear, reviewable diffs in pull requests.
+- **Single-tool workflow**: Developers stay in their editor. Edit schema.sql, run a Tern command, done.
+
+### Example: Adding a Column
+
+**Current workflow:**
+```bash
+# 1. Make sure local Postgres is running
+docker start my-postgres
+
+# 2. Apply existing migrations
+tern apply
+
+# 3. Manually alter the table
+psql -d mydb -c "ALTER TABLE users ADD COLUMN email VARCHAR(255) NOT NULL"
+
+# 4. Capture the change
+tern compile --description "Add email to users"
+```
+
+**Proposed workflow:**
+```bash
+# 1. Edit .tern/schema.sql - find the users table and add the column:
+#    CREATE TABLE users (
+#      id SERIAL PRIMARY KEY,
+#      name VARCHAR(100),
+#      email VARCHAR(255) NOT NULL  -- ← add this line
+#    );
+
+# 2. Generate migration
+tern schema migrate --description "Add email to users"
+```
+
+The proposed workflow is simpler, requires no external database, and keeps the developer in their editor.
 
 ## Architecture
 
-### High-Level Flow
+### Conceptual Model
+
+The architecture is built around a key abstraction: the **Namespace**. A `Namespace` is Tern's in-memory representation of a PostgreSQL schema, containing all tables, columns, constraints, indexes, views, sequences, and enums. Namespaces are:
+
+- **Serializable**: Can be saved to JSON and loaded back (this is how `state.json` works)
+- **Diffable**: Two Namespaces can be compared to produce a set of operations (migrations)
+- **Renderable**: A Namespace can be converted to SQL DDL
+
+The model-first workflow leverages these properties:
+
+```
+                    ┌─────────────────────────────────────────┐
+                    │              Namespace                   │
+                    │  (Tern's in-memory schema model)         │
+                    └─────────────────────────────────────────┘
+                           ▲                      │
+                           │                      │
+              ┌────────────┴────────────┐         │
+              │                         │         │
+        introspect                 deserialize    │  serialize
+        (from DB)                  (from JSON)    │  (to JSON)
+              │                         │         │
+              ▲                         ▲         ▼
+     ┌────────────────┐        ┌──────────────┐  ┌──────────────┐
+     │   PostgreSQL   │        │  state.json  │  │  state.json  │
+     │   (live DB)    │        │   (input)    │  │  (output)    │
+     └────────────────┘        └──────────────┘  └──────────────┘
+
+                                      │
+                                      │  render (to SQL)
+                                      ▼
+                              ┌──────────────┐
+                              │  schema.sql  │
+                              │  (DDL text)  │
+                              └──────────────┘
+```
+
+**The challenge**: While we can easily convert a Namespace to SQL (rendering), we cannot easily convert SQL back to a Namespace without executing it. SQL is a complex language with many syntactic variations, and parsing it reliably would require a full PostgreSQL-compatible parser.
+
+**The solution**: Execute the SQL in an embedded PostgreSQL instance (PGLite), then introspect the resulting schema using the same catalog queries we use for live databases. This reuses existing infrastructure and guarantees compatibility with any valid PostgreSQL DDL.
+
+### How Migration Generation Works
+
+When a user edits the schema file and runs `tern schema migrate`, the following process occurs:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    Migration Generation Process                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  Step 1: Determine Source State
+  ──────────────────────────────
+  The "source" is the current schema state before the user's edits.
+  This is already stored in state.json (or can be reconstructed from migrations).
+
+       ┌──────────────┐                    ┌──────────────┐
+       │  state.json  │  ───deserialize──► │  Namespace   │
+       │              │                    │  (source)    │
+       └──────────────┘                    └──────────────┘
+
+
+  Step 2: Determine Target State
+  ──────────────────────────────
+  The "target" is the desired schema state after the user's edits.
+  We obtain this by executing the edited schema.sql in PGLite and introspecting.
+
+       ┌──────────────┐                    ┌──────────────┐
+       │  schema.sql  │  ───execute──────► │   PGLite     │
+       │  (edited)    │                    │  (in-memory) │
+       └──────────────┘                    └──────┬───────┘
+                                                  │
+                                                  │ introspect
+                                                  ▼
+                                           ┌──────────────┐
+                                           │  Namespace   │
+                                           │  (target)    │
+                                           └──────────────┘
+
+
+  Step 3: Generate Migration
+  ──────────────────────────
+  Diff the source and target Namespaces to produce operations.
+
+       ┌──────────────┐         ┌──────────────┐
+       │  Namespace   │         │  Namespace   │
+       │  (source)    │         │  (target)    │
+       └──────┬───────┘         └──────┬───────┘
+              │                        │
+              └───────────┬────────────┘
+                          │ diff_namespaces()
+                          ▼
+                   ┌──────────────┐
+                   │ NamespaceDiff │
+                   │ • added       │
+                   │ • removed     │
+                   │ • modified    │
+                   └──────┬───────┘
+                          │ MigrationPlan::from_diff()
+                          ▼
+                   ┌──────────────┐
+                   │  Operations  │
+                   │ • CreateTable│
+                   │ • AddColumn  │
+                   │ • DropIndex  │
+                   │ • ...        │
+                   └──────┬───────┘
+                          │ PostgresRenderer
+                          ▼
+                   ┌──────────────┐
+                   │  Migration   │
+                   │  (SQL + ops) │
+                   └──────────────┘
+```
+
+### High-Level Flow Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -75,11 +312,13 @@ This workflow provides:
                                        └──────────────┘
 ```
 
+**Note on the diagram**: In practice, we may not need to execute the "old" schema.sql in PGLite—we can simply load the source Namespace directly from `state.json`. The diagram shows the conceptual flow; the implementation optimizes by reusing cached state.
+
 ### Key Components
 
 #### 1. Schema File Management
 
-The schema file represents the complete database DDL and can exist in two forms:
+The schema file represents the complete database DDL—the instructions to build the entire database schema from scratch. It can exist in two forms:
 
 | Mode | Path | Description |
 |------|------|-------------|
@@ -88,9 +327,52 @@ The schema file represents the complete database DDL and can exist in two forms:
 
 **Detection logic**: If `.tern/schema.sql` exists, use single-file mode. Otherwise, if `.tern/schema/` directory exists, use multi-file mode.
 
+**Single-file mode** is simpler and suitable for most projects. The entire schema is in one file, making it easy to search and navigate.
+
+**Multi-file mode** is useful for large databases where a single file becomes unwieldy. Users can organize their schema logically (e.g., one file per table, or grouped by domain). The trade-off is increased complexity in dependency management.
+
+**Example single-file schema:**
+```sql
+-- .tern/schema.sql
+
+-- Enum types
+CREATE TYPE user_status AS ENUM ('active', 'inactive', 'suspended');
+
+-- Tables
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    status user_status NOT NULL DEFAULT 'active',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE posts (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title VARCHAR(255) NOT NULL,
+    body TEXT,
+    published_at TIMESTAMP WITH TIME ZONE
+);
+
+-- Indexes
+CREATE INDEX idx_posts_user_id ON posts(user_id);
+CREATE INDEX idx_posts_published_at ON posts(published_at) WHERE published_at IS NOT NULL;
+```
+
+**Example multi-file schema:**
+```
+.tern/schema/
+├── 00_types.sql      # Enum types and domains
+├── 01_users.sql      # Users table
+├── 02_posts.sql      # Posts table (references users)
+└── 03_indexes.sql    # Additional indexes
+```
+
 #### 2. Schema Exporter
 
-Converts a `Namespace` (Tern's in-memory schema representation) to SQL DDL.
+The Schema Exporter converts a `Namespace` (Tern's in-memory schema representation) to SQL DDL. This is how we generate the schema.sql file from the current state.
+
+**The key insight**: Exporting a schema to DDL is equivalent to asking "what SQL would I need to run to create this schema from scratch?" This is exactly what a migration from an empty database to the current state would look like.
 
 ```
 Namespace → NamespaceDiff (vs empty) → MigrationPlan → PostgresRenderer → SQL
@@ -98,23 +380,60 @@ Namespace → NamespaceDiff (vs empty) → MigrationPlan → PostgresRenderer �
 
 This reuses existing infrastructure:
 - `diff_namespaces(&Namespace::empty(), &current)` produces a diff where everything is "added"
-- `MigrationPlan::from_diff()` converts to operations
+- `MigrationPlan::from_diff()` converts the diff to semantic operations
 - `PostgresRenderer` renders operations as SQL DDL
+
+**Output ordering**: The exporter produces DDL in dependency order:
+1. Enum types and domains (no dependencies)
+2. Sequences (no dependencies)
+3. Tables (may reference enums, sequences)
+4. Foreign key constraints (reference other tables)
+5. Indexes (reference tables)
+6. Views (may reference tables, other views)
+7. Comments (reference any object)
+
+This ordering ensures the schema.sql can be executed top-to-bottom without dependency errors.
 
 #### 3. PGLite Integration
 
-An embedded PostgreSQL instance (via PGLite/WASM) for executing DDL without requiring an external database.
+PGLite is PostgreSQL compiled to WebAssembly, allowing us to run a real PostgreSQL instance entirely in-memory without any external dependencies. This is the cornerstone of the model-first workflow.
+
+**Why PGLite is necessary:**
+
+The challenge with using SQL as the schema format is that we need to convert SQL back into a `Namespace` for diffing. There are two approaches:
+
+1. **Parse the SQL directly**: Build or use a SQL parser to extract schema information from DDL statements. This is complex because PostgreSQL's SQL syntax is vast and has many variations. A custom parser would need to handle all CREATE TABLE variants, column constraints, expressions, etc.
+
+2. **Execute the SQL and introspect**: Run the SQL in a real PostgreSQL instance, then query the system catalogs (`pg_class`, `pg_attribute`, `pg_constraint`, etc.) to extract schema information. This is what Tern already does for live databases.
+
+PGLite enables option 2 without requiring users to manage an external database. It provides:
+
+- **Full PostgreSQL compatibility**: PGLite runs actual PostgreSQL code, so any valid PostgreSQL DDL will work
+- **Sandboxed execution**: Each schema load runs in a fresh, isolated instance—no risk of conflicting with user data
+- **No installation required**: PGLite is embedded in Tern; users don't need to install PostgreSQL locally
+- **Fast startup**: In-memory instances start in milliseconds
 
 **Responsibilities:**
-- Execute SQL DDL statements
-- Provide a queryable catalog for schema introspection
-- Support the existing `Catalog` trait interface
+- Execute SQL DDL statements from schema files
+- Provide a queryable catalog for schema introspection via the existing `Catalog` trait
+- Validate that user-edited SQL is syntactically and semantically correct
 
-**Fallback**: Users can configure a real PostgreSQL connection for full compatibility when PGLite's limitations are encountered.
+**Fallback**: Users can configure a real PostgreSQL connection for full compatibility when PGLite's limitations are encountered (e.g., when using extensions like PostGIS that aren't available in PGLite).
 
 #### 4. Worklist Executor
 
-Handles dependency ordering when executing multiple SQL files (multi-file mode).
+When using multi-file mode, SQL files may have dependencies on each other. For example, a `posts.sql` file that creates a table with a foreign key to `users` cannot be executed until `users.sql` has been executed.
+
+**The problem**: We need to determine the correct execution order for SQL files, but we don't want to parse SQL to detect dependencies.
+
+**The solution**: Use a worklist (retry queue) algorithm that leverages PostgreSQL's own error messages to detect missing dependencies. The algorithm attempts to execute each file; if it fails due to a missing dependency, the file is moved to the back of the queue to be retried later.
+
+**Why this approach?**
+
+1. **No SQL parsing required**: We don't need to understand SQL syntax to detect dependencies
+2. **Handles all dependency types**: Foreign keys, sequences, functions, types, triggers—all handled uniformly
+3. **PostgreSQL is the authority**: PostgreSQL itself tells us when dependencies are missing, so we can't miss any
+4. **Correctly detects circular dependencies**: If we complete a full rotation through the queue without making progress, there's a genuine circular dependency that no ordering can resolve
 
 **Algorithm:**
 ```
@@ -156,13 +475,19 @@ function execute_schema_files(files: Vec<SqlFile>) -> Result<(), Error>:
 
 #### 5. Schema Introspector
 
-After executing DDL in PGLite, introspect the resulting schema using the existing `Catalog` trait and `load_namespace()` function.
+After executing DDL in PGLite, we need to extract the resulting schema as a `Namespace`. This is done using Tern's existing schema introspection infrastructure.
+
+Tern already has a `Catalog` trait that abstracts database queries for schema introspection. The `PostgresCatalog` implementation queries PostgreSQL's system catalogs (`pg_class`, `pg_attribute`, `pg_constraint`, etc.) to load complete schema information.
+
+For PGLite integration, we implement `PgLiteCatalog` with the same interface. Since PGLite runs real PostgreSQL, the same SQL queries work unchanged.
 
 ```rust
-// Existing infrastructure, reused
+// Existing infrastructure, reused with a new Catalog implementation
 let catalog = PgLiteCatalog::new(pglite_connection);
 let namespace = load_namespace(&catalog, "public").await?;
 ```
+
+**Key benefit**: By reusing the existing `Catalog` trait and `load_namespace()` function, we guarantee that schema introspection from PGLite produces exactly the same `Namespace` structure as introspection from a real PostgreSQL database. This ensures the diff and migration generation work correctly regardless of the source.
 
 ### Integration with Existing Architecture
 
