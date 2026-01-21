@@ -140,6 +140,8 @@ src/
 
 These steps are mandatory and must be performed on all modifications before marking a task as complete. Do not skip these checks even if the changes appear minor.
 
+**All lint violations must be resolved**, including any that are unrelated to the current changes. Before marking a task complete, ensure that `cargo make clippy` produces no warnings whatsoever.
+
 ## Testing
 
 - Tests are run using `cargo-nextest` (faster than default cargo test)
