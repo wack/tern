@@ -184,7 +184,7 @@ pub async fn run_history(
 mod tests {
     use super::*;
     use crate::db::model::Namespace;
-    use crate::db::state::{Migration, init_empty};
+    use crate::db::state::{LocalFileBackend, Migration, init_empty};
     use tempfile::TempDir;
 
     #[tokio::test]

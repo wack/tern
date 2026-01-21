@@ -315,7 +315,7 @@ impl std::fmt::Display for ChainVerifyOutput {
 mod tests {
     use super::*;
     use crate::db::model::Namespace;
-    use crate::db::state::init_empty;
+    use crate::db::state::{LocalFileBackend, init_empty};
     use tempfile::TempDir;
 
     #[tokio::test]

@@ -21,6 +21,13 @@ path = "src/bin/main.rs"
 tern-migration-wit = { path = "crates/tern-migration-wit" }
 tern-migration-guest = { path = "crates/tern-migration-guest" }
 tern-migration-runner = { path = "crates/tern-migration-runner" }
+
+# WebAssembly runtime and tooling
+wasmtime = { version = "41", features = ["component-model", "cranelift"] }
+wasmtime-wasi = { version = "41" }
+wasm-encoder = "0.227"
+wit-component = "0.227"
+
 async-trait = "0.1.89"
 bon = "3.8.1"
 jiff = { version = "0.2.1", features = ["serde"] }
