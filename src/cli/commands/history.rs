@@ -5,7 +5,7 @@
 use miette::IntoDiagnostic;
 use serde::Serialize;
 
-use super::{LocalFileBackend, OutputFormat, ensure_backend_initialized, load_backend, print_json};
+use super::{OutputFormat, ensure_backend_initialized, load_backend, print_json};
 use crate::db::state::StateBackend;
 
 /// History output for JSON format.
@@ -184,7 +184,7 @@ pub async fn run_history(
 mod tests {
     use super::*;
     use crate::db::model::Namespace;
-    use crate::db::state::{Migration, init_empty};
+    use crate::db::state::{LocalFileBackend, Migration, StateBackend, init_empty};
     use tempfile::TempDir;
 
     #[tokio::test]

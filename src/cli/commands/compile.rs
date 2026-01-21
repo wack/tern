@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use miette::{Context, IntoDiagnostic, miette};
 use serde::Serialize;
 
-use super::{LocalFileBackend, OutputFormat, ensure_backend_initialized, load_backend, print_json};
+use super::{OutputFormat, ensure_backend_initialized, load_backend, print_json};
 use crate::db::compile::{CompileOptions, Target, compile_migration};
 use crate::db::query::PostgresCatalog;
 use crate::db::state::StateBackend;

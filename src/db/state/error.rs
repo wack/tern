@@ -204,6 +204,14 @@ pub enum StateError {
         source: serde_json::Error,
     },
 
+    /// Failed to write schema DDL file.
+    #[error("failed to write schema file: {source}")]
+    #[diagnostic(code(tern::state::write_schema))]
+    WriteSchema {
+        #[source]
+        source: std::io::Error,
+    },
+
     /// Failed to apply operations during state reconstruction.
     #[error("failed to reconstruct state at migration {id}: {message}")]
     #[diagnostic(
