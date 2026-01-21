@@ -1,0 +1,21 @@
+name: Tokei Code Report
+
+on:
+  push:
+    branches:
+      - trunk
+
+jobs:
+  tokei:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install tokei
+        uses: taiki-e/install-action@v2
+        with:
+          tool: tokei
+
+      - name: Generate code statistics
+        run: tokei --exclude target
