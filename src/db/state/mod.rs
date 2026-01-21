@@ -123,11 +123,13 @@
 //! - Existing migration histories remain valid after upgrades
 
 mod error;
+mod exporter;
 mod init;
 pub mod local;
 mod types;
 
 pub use error::StateError;
+pub use exporter::{ExportConfig, SchemaExporter};
 pub use init::{InitError, init_empty, init_from_database, verify_state};
 pub use local::{DEFAULT_STATE_DIR, LocalFileBackend};
 pub use types::{Migration, MigrationId, MigrationIndex, StateHash};

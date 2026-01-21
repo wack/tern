@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use miette::{Context, IntoDiagnostic, miette};
 use serde::Serialize;
 
-use super::{LocalFileBackend, OutputFormat, ensure_backend_initialized, load_backend, print_json};
+use super::{OutputFormat, ensure_backend_initialized, load_backend, print_json};
 use crate::db::state::{Migration, MigrationId, StateBackend, StateHash};
 
 /// Record output for JSON format.
@@ -190,7 +190,7 @@ pub fn create_sync_migration(
 mod tests {
     use super::*;
     use crate::db::model::Namespace;
-    use crate::db::state::init_empty;
+    use crate::db::state::{LocalFileBackend, StateBackend, init_empty};
     use tempfile::TempDir;
 
     #[tokio::test]

@@ -24,6 +24,12 @@ const INDEX_FILE: &str = "index.json";
 /// Current state file name.
 const STATE_FILE: &str = "state.json";
 
+/// Schema DDL file name.
+///
+/// This file contains the complete schema as SQL DDL statements.
+/// It is automatically regenerated when migrations are recorded.
+const SCHEMA_FILE: &str = "schema.sql";
+
 /// A state backend that stores migrations on the local filesystem.
 ///
 /// # Directory Structure
@@ -95,6 +101,16 @@ impl LocalFileBackend {
     /// Returns the path to the current state file.
     fn state_path(&self) -> PathBuf {
         self.root.join(STATE_FILE)
+    }
+
+    /// Returns the path to the schema DDL file.
+    ///
+    /// The schema file (`.tern/schema.sql`) contains the complete database
+    /// schema as SQL DDL statements. It is regenerated automatically when
+    /// migrations are recorded.
+    #[must_use]
+    pub fn schema_path(&self) -> PathBuf {
+        self.root.join(SCHEMA_FILE)
     }
 
     /// Returns the path to a migration file by sequence number.
@@ -213,6 +229,52 @@ impl LocalFileBackend {
             .map_err(|source| StateError::SerializeState { source })?;
 
         std::fs::write(&state_path, content).map_err(|source| StateError::WriteState { source })
+    }
+
+    /// Exports the schema as SQL DDL to the schema file.
+    ///
+    /// This method generates a `.tern/schema.sql` file containing SQL DDL
+    /// statements that would recreate the schema from scratch. The file is
+    /// useful for:
+    ///
+    /// - Viewing the current schema in a human-readable format
+    /// - Model-first migration workflows (editing schema.sql to define changes)
+    /// - Documentation and code review
+    ///
+    /// The generated SQL is ordered to respect dependencies (enums before
+    /// tables that use them, tables before foreign keys that reference them,
+    /// etc.).
+    ///
+    /// # Arguments
+    ///
+    /// * `state` - The namespace to export
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the backend is not initialized or if writing
+    /// the file fails.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let backend = LocalFileBackend::default_location();
+    /// let namespace = backend.get_current_state().await?;
+    /// backend.export_schema(&namespace)?;
+    /// // Schema is now written to .tern/schema.sql
+    /// ```
+    pub fn export_schema(&self, state: &Namespace) -> Result<(), StateError> {
+        use super::SchemaExporter;
+
+        if !self.is_initialized_sync() {
+            return Err(StateError::NotInitialized {
+                path: self.root.clone(),
+            });
+        }
+
+        let schema_path = self.schema_path();
+        let sql = SchemaExporter::export(state);
+
+        std::fs::write(&schema_path, sql).map_err(|source| StateError::WriteSchema { source })
     }
 
     /// Finds the nearest checkpoint migration at or before the given index.
@@ -350,6 +412,11 @@ impl StateBackend for LocalFileBackend {
 
         // Then update the current state
         self.save_current_state(new_state).await?;
+
+        // Auto-regenerate schema.sql to keep it in sync with the current state.
+        // This enables the model-first workflow where users can view/edit the
+        // schema as SQL DDL.
+        self.export_schema(new_state)?;
 
         Ok(())
     }

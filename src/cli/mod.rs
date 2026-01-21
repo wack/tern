@@ -248,6 +248,40 @@ pub enum CliCommand {
         #[arg(long)]
         path: Option<PathBuf>,
     },
+
+    /// Schema management commands
+    ///
+    /// Commands for working with the schema DDL file, which forms the
+    /// foundation of the model-first migration workflow.
+    #[command(subcommand)]
+    Schema(SchemaAction),
+}
+
+/// Schema-related subcommands.
+///
+/// These commands support the model-first migration workflow by allowing
+/// users to work with the schema as SQL DDL.
+#[derive(Debug, Subcommand, Clone)]
+pub enum SchemaAction {
+    /// Export the current schema as SQL DDL
+    ///
+    /// Generates a schema.sql file containing SQL DDL statements that
+    /// would recreate the current schema from scratch. This file is
+    /// useful for viewing the schema, documentation, and the model-first
+    /// migration workflow.
+    Export {
+        /// Output path for the schema file (default: .tern/schema.sql, use "-" for stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Output format (text shows summary, sql shows DDL, json includes metadata)
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+
+        /// Path to the state directory
+        #[arg(long)]
+        path: Option<PathBuf>,
+    },
 }
 
 impl CliCommand {
@@ -327,6 +361,20 @@ impl CliCommand {
             CliCommand::VerifyChain { format, path } => {
                 commands::run_verify_chain(format, path.as_deref()).await
             }
+            CliCommand::Schema(action) => action.dispatch().await,
+        }
+    }
+}
+
+impl SchemaAction {
+    /// Dispatch schema subcommands.
+    pub async fn dispatch(self) -> miette::Result<()> {
+        match self {
+            SchemaAction::Export {
+                output,
+                format,
+                path,
+            } => commands::run_schema_export(output, path.as_deref(), format).await,
         }
     }
 }
