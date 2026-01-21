@@ -12,10 +12,16 @@ fi
 
 echo "Installing development tools for Tern..."
 
+# Install cargo-binstall if not already installed (for fast binary downloads)
+if ! command -v cargo-binstall &> /dev/null; then
+  echo "Installing cargo-binstall..."
+  curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+fi
+
 # Install cargo-make if not already installed
 if ! command -v cargo-make &> /dev/null; then
   echo "Installing cargo-make..."
-  cargo install cargo-make
+  cargo binstall -y cargo-make
 else
   echo "cargo-make already installed"
 fi
@@ -23,7 +29,7 @@ fi
 # Install cargo-nextest if not already installed
 if ! command -v cargo-nextest &> /dev/null; then
   echo "Installing cargo-nextest..."
-  cargo install cargo-nextest
+  cargo binstall -y cargo-nextest
 else
   echo "cargo-nextest already installed"
 fi
