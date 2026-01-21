@@ -95,6 +95,26 @@ src/
 
 ## Architecture
 
+### Design Principles
+
+The following principles guide architectural decisions in Tern:
+
+1. **No External Runtime Dependencies**: The Tern binary must be fully self-contained. Users should not need to install any external tools or runtimes to use Tern. The only external dependency permitted at runtime is PostgreSQL (the database being migrated). All functionality—including WebAssembly compilation, component composition, and AOT native code generation—must be implemented using Rust libraries embedded in the binary.
+
+2. **No Subprocess Execution**: Tern must not invoke external processes using `std::process::Command` or similar mechanisms at runtime. This ensures:
+   - Predictable behavior across all platforms
+   - No hidden dependencies on system-installed tools
+   - Consistent error handling and user experience
+   - Security (no shell injection vulnerabilities)
+
+   **Exception**: The `build.rs` script may invoke `cargo` during Tern's own compilation (not at user runtime) to build WebAssembly components that are then embedded in the binary.
+
+3. **WebAssembly-Based Compilation**: Migration executables are produced using the WebAssembly component model:
+   - Pre-compiled WASI components are embedded in the Tern binary
+   - Component composition and AOT compilation use Wasmtime's Rust API
+   - The output is a standalone native executable with the Wasmtime runtime embedded
+   - Cross-compilation is simplified: compile to Wasm once, then AOT compile for each target platform
+
 ### Core Design Patterns
 
 - **Sans-I/O Pattern**: The `db::query` module separates I/O from business logic:
