@@ -1,0 +1,314 @@
+//! Show command for displaying migration details.
+//!
+//! This command displays detailed information about a specific migration.
+
+use miette::{IntoDiagnostic, miette};
+use serde::Serialize;
+
+use super::{OutputFormat, print_json};
+use crate::db::migrate::{MigrationPlan, PostgresRenderer, RenderConfig};
+use crate::db::state::{LocalFileBackend, MigrationId, StateBackend};
+
+/// Show output for JSON format.
+#[derive(Debug, Clone, Serialize)]
+pub struct ShowOutput {
+    /// Migration ID (full hex).
+    pub id: String,
+    /// Short ID for display.
+    pub short_id: String,
+    /// Migration description.
+    pub description: String,
+    /// When the migration was created.
+    pub created_at: String,
+    /// Parent state hash.
+    pub parent_state_hash: String,
+    /// Resulting state hash.
+    pub resulting_state_hash: String,
+    /// Number of operations.
+    pub operation_count: usize,
+    /// Whether it has breaking changes.
+    pub has_breaking_changes: bool,
+    /// Whether it's a baseline migration.
+    pub is_baseline: bool,
+    /// Whether it's a checkpoint (includes full state).
+    pub is_checkpoint: bool,
+    /// Breaking changes, if any.
+    pub breaking_changes: Vec<BreakingChangeInfo>,
+    /// SQL statements (for SQL format).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sql_statements: Option<Vec<String>>,
+}
+
+/// Breaking change information.
+#[derive(Debug, Clone, Serialize)]
+pub struct BreakingChangeInfo {
+    /// Description of the breaking change.
+    pub description: String,
+    /// Mitigation strategy.
+    pub mitigation: String,
+}
+
+impl std::fmt::Display for ShowOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Migration Details")?;
+        writeln!(f, "=================")?;
+        writeln!(f)?;
+        writeln!(f, "  ID:             {}", self.id)?;
+        writeln!(f, "  Description:    {}", self.description)?;
+        writeln!(f, "  Created:        {}", self.created_at)?;
+        writeln!(f, "  Operations:     {}", self.operation_count)?;
+        writeln!(f)?;
+        writeln!(f, "State Transition")?;
+        writeln!(f, "----------------")?;
+        writeln!(f, "  From: {}", &self.parent_state_hash[..16])?;
+        writeln!(f, "  To:   {}", &self.resulting_state_hash[..16])?;
+        writeln!(f)?;
+        writeln!(f, "Flags")?;
+        writeln!(f, "-----")?;
+        writeln!(
+            f,
+            "  Baseline:         {}",
+            if self.is_baseline { "Yes" } else { "No" }
+        )?;
+        writeln!(
+            f,
+            "  Checkpoint:       {}",
+            if self.is_checkpoint { "Yes" } else { "No" }
+        )?;
+        writeln!(
+            f,
+            "  Breaking changes: {}",
+            if self.has_breaking_changes {
+                "Yes"
+            } else {
+                "No"
+            }
+        )?;
+
+        if !self.breaking_changes.is_empty() {
+            writeln!(f)?;
+            writeln!(f, "Breaking Changes")?;
+            writeln!(f, "----------------")?;
+            for bc in &self.breaking_changes {
+                writeln!(f, "  [{}] {}", bc.mitigation, bc.description)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Runs the show command.
+///
+/// Displays detailed information about a specific migration.
+///
+/// # Arguments
+///
+/// * `migration_id` - Migration ID (full or prefix)
+/// * `format` - Output format (text, json, or sql)
+/// * `state_path` - Optional path to the state directory
+pub async fn run_show(
+    migration_id: &str,
+    format: OutputFormat,
+    state_path: Option<&std::path::Path>,
+) -> miette::Result<()> {
+    // Load the state backend
+    let backend = match state_path {
+        Some(p) => LocalFileBackend::at_path(p),
+        None => LocalFileBackend::default_location(),
+    };
+
+    if !backend.is_initialized().await.into_diagnostic()? {
+        return Err(miette!(
+            "State backend not initialized at {}\n\nRun 'tern init' to initialize a new project.",
+            backend.root().display()
+        ));
+    }
+
+    // Find the migration
+    let migration = find_migration(&backend, migration_id).await?;
+
+    // Generate SQL if needed
+    let sql_statements = if matches!(format, OutputFormat::Sql) {
+        let plan = MigrationPlan::from_operations(migration.operations.clone());
+        let renderer = PostgresRenderer::new(RenderConfig::default());
+        let script = plan.render(&renderer);
+        Some(
+            script
+                .all_statements()
+                .into_iter()
+                .map(String::from)
+                .collect(),
+        )
+    } else {
+        None
+    };
+
+    // Build output
+    let output = ShowOutput {
+        id: migration.id.to_hex(),
+        short_id: migration.id.to_short_hex(),
+        description: migration.description.clone(),
+        created_at: migration.created_at.to_string(),
+        parent_state_hash: migration.parent_state_hash.to_hex(),
+        resulting_state_hash: migration.resulting_state_hash.to_hex(),
+        operation_count: migration.operation_count(),
+        has_breaking_changes: migration.has_breaking_changes(),
+        is_baseline: migration.is_baseline(),
+        is_checkpoint: migration.is_checkpoint(),
+        breaking_changes: migration
+            .breaking_changes
+            .iter()
+            .map(|bc| BreakingChangeInfo {
+                description: bc.description.clone(),
+                mitigation: bc.mitigation.as_str().to_string(),
+            })
+            .collect(),
+        sql_statements,
+    };
+
+    match format {
+        OutputFormat::Text => println!("{}", output),
+        OutputFormat::Json => print_json(&output),
+        OutputFormat::Sql => {
+            if let Some(ref statements) = output.sql_statements {
+                if statements.is_empty() {
+                    println!("-- No SQL statements (baseline migration)");
+                } else {
+                    println!("-- Migration: {} ({})", output.short_id, output.description);
+                    println!();
+                    for stmt in statements {
+                        println!("{};", stmt);
+                        println!();
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Finds a migration by ID or prefix.
+async fn find_migration(
+    backend: &LocalFileBackend,
+    id_str: &str,
+) -> miette::Result<crate::db::state::Migration> {
+    // Try to parse as a full ID first
+    if let Some(id) = MigrationId::from_hex(id_str) {
+        return backend
+            .get_migration(&id)
+            .await
+            .into_diagnostic()
+            .wrap_err("Migration not found");
+    }
+
+    // Otherwise, search by prefix
+    let index = backend.get_migration_index().await.into_diagnostic()?;
+
+    // Find migrations that match the prefix
+    let matches: Vec<_> = index
+        .migrations
+        .iter()
+        .filter(|id| id.to_hex().starts_with(id_str) || id.to_short_hex().starts_with(id_str))
+        .collect();
+
+    match matches.len() {
+        0 => Err(miette!("No migration found matching '{}'", id_str)),
+        1 => backend
+            .get_migration(matches[0])
+            .await
+            .into_diagnostic()
+            .wrap_err("Failed to load migration"),
+        n => Err(miette!(
+            "Ambiguous migration ID '{}' matches {} migrations. Please provide more characters.",
+            id_str,
+            n
+        )),
+    }
+}
+
+use miette::Context;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::state::init_empty;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn show_baseline_migration() {
+        let temp_dir = TempDir::new().unwrap();
+        let backend = LocalFileBackend::at_path(temp_dir.path());
+
+        // Initialize
+        init_empty(&backend, "public").await.unwrap();
+
+        // Get baseline ID
+        let index = backend.get_migration_index().await.unwrap();
+        let baseline_id = index.last().unwrap().to_hex();
+
+        // Show should work
+        run_show(&baseline_id, OutputFormat::Text, Some(temp_dir.path()))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn show_by_prefix() {
+        let temp_dir = TempDir::new().unwrap();
+        let backend = LocalFileBackend::at_path(temp_dir.path());
+
+        // Initialize
+        init_empty(&backend, "public").await.unwrap();
+
+        // Get baseline ID prefix
+        let index = backend.get_migration_index().await.unwrap();
+        let prefix = &index.last().unwrap().to_hex()[..8];
+
+        // Show by prefix should work
+        run_show(prefix, OutputFormat::Text, Some(temp_dir.path()))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn show_not_found() {
+        let temp_dir = TempDir::new().unwrap();
+        let backend = LocalFileBackend::at_path(temp_dir.path());
+
+        // Initialize
+        init_empty(&backend, "public").await.unwrap();
+
+        // Non-existent ID should fail
+        let result = run_show("nonexistent", OutputFormat::Text, Some(temp_dir.path())).await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn show_output_display() {
+        let output = ShowOutput {
+            id: "a".repeat(64),
+            short_id: "abcd1234".to_string(),
+            description: "Test migration".to_string(),
+            created_at: "2024-01-15T10:00:00Z".to_string(),
+            parent_state_hash: "0".repeat(64),
+            resulting_state_hash: "1".repeat(64),
+            operation_count: 3,
+            has_breaking_changes: true,
+            is_baseline: false,
+            is_checkpoint: false,
+            breaking_changes: vec![BreakingChangeInfo {
+                description: "Dropping column".to_string(),
+                mitigation: "Destructive".to_string(),
+            }],
+            sql_statements: None,
+        };
+
+        let display = format!("{}", output);
+        assert!(display.contains("Migration Details"));
+        assert!(display.contains("Test migration"));
+        assert!(display.contains("Breaking Changes"));
+        assert!(display.contains("Dropping column"));
+    }
+}

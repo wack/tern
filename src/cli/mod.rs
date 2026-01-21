@@ -1,6 +1,15 @@
+//! CLI command definitions and dispatch.
+//!
+//! This module defines the command-line interface for Tern, including all
+//! available commands and their argument structures.
+
 mod colors;
+pub mod commands;
 
 pub use colors::EnableColors;
+pub use commands::OutputFormat;
+
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use miette::{Context, IntoDiagnostic};
@@ -19,6 +28,9 @@ pub enum LogFormat {
 }
 
 #[derive(Debug, Parser, Clone)]
+#[command(name = "tern")]
+#[command(about = "A database migration tool written in Rust")]
+#[command(version)]
 pub struct Cli {
     #[arg(long, env = "LOG_LEVEL", default_value = "info", global = true)]
     pub log_level: LevelFilter,
@@ -53,6 +65,189 @@ pub enum CliCommand {
         #[arg(long, default_value = "public")]
         schema: String,
     },
+
+    /// Initialize a new Tern project with state backend
+    ///
+    /// Creates the .tern/ directory structure and optionally captures
+    /// the current database schema as the baseline migration.
+    Init {
+        /// PostgreSQL connection string to initialize from (captures current schema)
+        #[arg(long, env = "DATABASE_URL")]
+        from: Option<String>,
+
+        /// The database schema to capture
+        #[arg(long, default_value = "public")]
+        schema: String,
+
+        /// Path to create the state directory (default: current directory)
+        #[arg(long)]
+        path: Option<PathBuf>,
+    },
+
+    /// Show state backend status
+    ///
+    /// Displays information about the current state backend, including
+    /// migration count, state hash, and schema summary.
+    Status {
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+
+        /// Path to the state directory
+        #[arg(long)]
+        path: Option<PathBuf>,
+    },
+
+    /// Compile a migration to source code
+    ///
+    /// Compares the state backend to the live database and generates
+    /// migration source code for the detected changes.
+    Compile {
+        /// PostgreSQL connection string
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: String,
+
+        /// The database schema to compare
+        #[arg(long, default_value = "public")]
+        schema: String,
+
+        /// Output path for the generated source code
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Migration description
+        #[arg(long)]
+        description: String,
+
+        /// Target platform for executable (native, x86_64-linux-gnu, etc.)
+        #[arg(long, default_value = "native")]
+        target: String,
+
+        /// Record the migration to the state backend
+        #[arg(long)]
+        record: bool,
+
+        /// Preview without writing files
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Include SQL statements in output
+        #[arg(long)]
+        show_sql: bool,
+
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+
+        /// Path to the state directory
+        #[arg(long)]
+        state_path: Option<PathBuf>,
+    },
+
+    /// List migration history
+    ///
+    /// Shows the ordered list of migrations in the state backend.
+    History {
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+
+        /// Maximum number of migrations to show (from most recent)
+        #[arg(long)]
+        limit: Option<usize>,
+
+        /// Path to the state directory
+        #[arg(long)]
+        path: Option<PathBuf>,
+    },
+
+    /// Show details of a specific migration
+    ///
+    /// Displays detailed information about a migration, including
+    /// its operations, state hashes, and breaking changes.
+    Show {
+        /// Migration ID (full hex or prefix)
+        migration_id: String,
+
+        /// Output format (text, json, or sql)
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+
+        /// Path to the state directory
+        #[arg(long)]
+        path: Option<PathBuf>,
+    },
+
+    /// Record a migration as applied
+    ///
+    /// Marks a migration as applied in the state backend without
+    /// executing it. Useful for synchronizing state backends.
+    Record {
+        /// Migration ID to record (if already in backend)
+        #[arg(long)]
+        migration_id: Option<String>,
+
+        /// Path to a migration JSON file
+        #[arg(long)]
+        migration_file: Option<PathBuf>,
+
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+
+        /// Path to the state directory
+        #[arg(long)]
+        path: Option<PathBuf>,
+    },
+
+    /// Inspect a compiled migration file
+    ///
+    /// Examines a migration source file or JSON file and displays
+    /// its contents and metadata.
+    Inspect {
+        /// Path to the file to inspect (.json or .rs)
+        path: PathBuf,
+
+        /// Output format (text, json, or sql)
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+    },
+
+    /// Verify state backend matches database
+    ///
+    /// Compares the state backend to the live database schema and
+    /// reports any drift (manual changes not captured in migrations).
+    Verify {
+        /// PostgreSQL connection string
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: String,
+
+        /// The database schema to verify
+        #[arg(long, default_value = "public")]
+        schema: String,
+
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+
+        /// Path to the state directory
+        #[arg(long)]
+        path: Option<PathBuf>,
+    },
+
+    /// Verify migration chain integrity
+    ///
+    /// Checks that all migrations in the state backend have valid
+    /// parent-child relationships (chain integrity).
+    VerifyChain {
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+
+        /// Path to the state directory
+        #[arg(long)]
+        path: Option<PathBuf>,
+    },
 }
 
 impl CliCommand {
@@ -66,6 +261,72 @@ impl CliCommand {
                 database_url,
                 schema,
             } => print_migrations(&database_url, &schema).await,
+            CliCommand::Init { from, schema, path } => {
+                commands::run_init(from, &schema, path.as_deref()).await
+            }
+            CliCommand::Status { format, path } => {
+                commands::run_status(format, path.as_deref()).await
+            }
+            CliCommand::Compile {
+                database_url,
+                schema,
+                output,
+                description,
+                target,
+                record,
+                dry_run,
+                show_sql,
+                format,
+                state_path,
+            } => {
+                commands::run_compile(
+                    &database_url,
+                    &schema,
+                    output,
+                    &description,
+                    &target,
+                    record,
+                    dry_run,
+                    show_sql,
+                    format,
+                    state_path.as_deref(),
+                )
+                .await
+            }
+            CliCommand::History {
+                format,
+                limit,
+                path,
+            } => commands::run_history(format, limit, path.as_deref()).await,
+            CliCommand::Show {
+                migration_id,
+                format,
+                path,
+            } => commands::run_show(&migration_id, format, path.as_deref()).await,
+            CliCommand::Record {
+                migration_id,
+                migration_file,
+                format,
+                path,
+            } => {
+                commands::run_record(
+                    migration_id.as_deref(),
+                    migration_file,
+                    format,
+                    path.as_deref(),
+                )
+                .await
+            }
+            CliCommand::Inspect { path, format } => commands::run_inspect(path, format).await,
+            CliCommand::Verify {
+                database_url,
+                schema,
+                format,
+                path,
+            } => commands::run_verify(&database_url, &schema, format, path.as_deref()).await,
+            CliCommand::VerifyChain { format, path } => {
+                commands::run_verify_chain(format, path.as_deref()).await
+            }
         }
     }
 }
