@@ -17,5 +17,25 @@ jobs:
         with:
           tool: tokei
 
-      - name: Generate code statistics
-        run: tokei --exclude target
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install tokei-pie
+        run: pip install tokei-pie
+
+      - name: Generate code statistics report
+        run: tokei --exclude target -o json > tokei-report.json
+
+      - name: Generate code statistics chart
+        run: tokei -o json --exclude target | tokei-pie > code-statistics-chart.html
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-statistics
+          path: |
+            tokei-report.json
+            code-statistics-chart.html
+          retention-days: 90
