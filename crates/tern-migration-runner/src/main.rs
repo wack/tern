@@ -1,38 +1,31 @@
-//! Tern Migration Runner CLI
+//! Tern Migration Runner CLI (Native Testing Binary)
 //!
-//! This is the CLI entry point for standalone migration executables.
-//! When a migration is compiled, this runner is bundled with the migration
-//! component to create a self-contained executable.
+//! This is a native testing binary for the migration runner. It is NOT the
+//! actual WASI component that gets embedded in migration executables.
 //!
-//! # Usage
+//! The native binary is built with the `native` feature and is used for:
+//! - Testing CLI argument parsing
+//! - Testing output formatting
+//! - Development and debugging
 //!
-//! ```text
-//! # Execute a migration
-//! ./migration --database-url postgres://localhost/mydb
-//!
-//! # Dry run (show SQL without executing)
-//! ./migration --database-url postgres://localhost/mydb --dry-run
-//!
-//! # Show metadata
-//! ./migration --describe
-//!
-//! # Output as JSON
-//! ./migration --describe --format json
-//! ```
+//! For actual migration execution, the runner is compiled to `wasm32-wasip2`
+//! and composed with a migration component to create standalone executables.
 
-use std::io::{self, Write};
+#![cfg(feature = "native")]
+
 use std::process::ExitCode;
 
 use clap::Parser;
-use tracing_subscriber::EnvFilter;
 
-use tern_migration_runner::error::CliError;
-use tern_migration_runner::host::{HostState, connect_database};
-use tern_migration_runner::runtime::MigrationRuntime;
+use tern_migration_runner::{
+    BreakingChange, MigrationMetadata, MitigationStrategy, OutputFormat, Statement,
+    format_metadata_json, format_metadata_text, format_statements_json, format_statements_text,
+    help_message, truncate_sql, version_string,
+};
 
 /// Output format for describe and dry-run commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum OutputFormat {
+pub enum CliOutputFormat {
     /// Human-readable text output.
     #[default]
     Text,
@@ -40,7 +33,7 @@ pub enum OutputFormat {
     Json,
 }
 
-impl std::str::FromStr for OutputFormat {
+impl std::str::FromStr for CliOutputFormat {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -52,460 +45,211 @@ impl std::str::FromStr for OutputFormat {
     }
 }
 
-/// Tern Migration Runner - Execute compiled database migrations.
+impl From<CliOutputFormat> for OutputFormat {
+    fn from(value: CliOutputFormat) -> Self {
+        match value {
+            CliOutputFormat::Text => OutputFormat::Text,
+            CliOutputFormat::Json => OutputFormat::Json,
+        }
+    }
+}
+
+/// Tern Migration Runner - Native Testing CLI
+///
+/// This is a native testing binary for development purposes.
+/// The actual runner is compiled to WASI for embedding in migration executables.
 #[derive(Debug, Parser)]
-#[command(name = "tern-migration")]
-#[command(about = "Execute a compiled database migration")]
+#[command(name = "tern-migration-runner")]
+#[command(about = "Native testing CLI for migration runner development")]
 #[command(version)]
 pub struct Cli {
-    /// PostgreSQL database URL.
-    ///
-    /// Can also be set via the DATABASE_URL environment variable.
-    #[arg(long, env = "DATABASE_URL")]
-    database_url: Option<String>,
-
-    /// Dry run mode - show SQL without executing.
-    ///
-    /// In this mode, the migration will run but no SQL will actually be
-    /// executed against the database. The SQL statements that would be
-    /// executed are printed to stdout.
-    #[arg(long, default_value = "false")]
-    dry_run: bool,
-
-    /// Skip confirmation prompts for breaking changes.
-    ///
-    /// By default, the runner will prompt for confirmation before executing
-    /// migrations that contain breaking changes. Use this flag to skip
-    /// the prompt (useful for CI/CD pipelines).
-    #[arg(long, short, default_value = "false")]
-    yes: bool,
-
     /// Show migration metadata without executing.
-    ///
-    /// Displays information about the migration including description,
-    /// statement count, and any breaking changes.
-    #[arg(long, default_value = "false")]
+    #[arg(long, short, default_value = "false")]
     describe: bool,
 
-    /// Output format for describe and dry-run modes.
-    #[arg(long, default_value = "text")]
-    format: OutputFormat,
-
     /// Show SQL statements without executing.
-    ///
-    /// Similar to dry-run but just lists the SQL statements.
-    #[arg(long, default_value = "false")]
+    #[arg(long, short, default_value = "false")]
     show_sql: bool,
 
-    /// Enable verbose logging.
+    /// Output format.
+    #[arg(long, short, default_value = "text")]
+    format: CliOutputFormat,
+
+    /// Show help message (library version).
+    #[arg(long)]
+    show_help: bool,
+
+    /// Show version (library version).
+    #[arg(long)]
+    show_version: bool,
+
+    /// Enable verbose output.
     #[arg(long, short, default_value = "false")]
     verbose: bool,
 
-    /// Path to the WebAssembly component file.
-    ///
-    /// If not provided, the runner expects the component to be embedded
-    /// at compile time (for standalone executables).
-    #[arg(long)]
-    component: Option<std::path::PathBuf>,
+    /// Use test data instead of requiring a component.
+    #[arg(long, default_value = "true")]
+    test_mode: bool,
 }
 
-/// Main entry point.
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
-    // Initialize tracing
-    let filter = if cli.verbose {
-        EnvFilter::new("debug")
-    } else {
-        EnvFilter::new("info")
-    };
+    if cli.show_help {
+        println!("{}", help_message());
+        return ExitCode::SUCCESS;
+    }
 
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .init();
+    if cli.show_version {
+        println!("{}", version_string());
+        return ExitCode::SUCCESS;
+    }
 
-    // Run with tokio for async database operations
-    let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
-
-    match runtime.block_on(run(cli)) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(err) => {
-            eprintln!("Error: {:?}", err);
-            ExitCode::FAILURE
+    // In test mode, use sample data
+    if cli.test_mode {
+        if cli.describe || (!cli.show_sql && !cli.describe) {
+            describe_test_migration(cli.format.into());
         }
-    }
-}
-
-/// Run the CLI command.
-async fn run(cli: Cli) -> Result<(), CliError> {
-    // Load the component
-    let component_bytes = load_component(&cli)?;
-    let runtime = MigrationRuntime::from_bytes(&component_bytes)?;
-
-    // Handle different modes
-    if cli.describe {
-        describe_migration(&runtime, cli.format)?;
-    } else if cli.show_sql {
-        show_sql(&runtime, cli.format)?;
-    } else if cli.dry_run {
-        dry_run(&runtime, cli.format)?;
-    } else {
-        execute_migration(&runtime, &cli).await?;
+        if cli.show_sql {
+            show_test_sql(cli.format.into());
+        }
+        return ExitCode::SUCCESS;
     }
 
-    Ok(())
+    // Without test mode, we'd need an actual WASI component
+    eprintln!("Error: Non-test mode not yet supported. Use --test-mode for development testing.");
+    ExitCode::FAILURE
 }
 
-/// Load the WebAssembly component.
-fn load_component(cli: &Cli) -> Result<Vec<u8>, CliError> {
-    if let Some(path) = &cli.component {
-        // Load from file
-        std::fs::read(path).map_err(|e| CliError::file_read(path.display().to_string(), e))
-    } else {
-        // For embedded components, this would use include_bytes! in build.rs
-        // For now, require the --component flag
-        Err(CliError::missing_argument("--component"))
-    }
-}
-
-/// Show migration metadata.
-fn describe_migration(runtime: &MigrationRuntime, format: OutputFormat) -> Result<(), CliError> {
-    let metadata = runtime.describe()?;
+/// Show test migration metadata.
+fn describe_test_migration(format: OutputFormat) {
+    let metadata = test_metadata();
 
     match format {
         OutputFormat::Text => {
-            println!("Migration: {}", metadata.id);
-            println!("Description: {}", metadata.description);
-            println!("Statements: {}", metadata.statement_count);
-            println!("Source State: {}", metadata.source_state_hash);
-            println!("Target State: {}", metadata.target_state_hash);
-            println!("Compiled At: {}", metadata.compiled_at);
-
-            if metadata.has_breaking_changes() {
-                println!();
-                println!("Breaking Changes:");
-                for bc in &metadata.breaking_changes {
-                    println!("  - {} [{}]", bc.description, bc.mitigation);
-                    for sql in &bc.affected_sql {
-                        println!("    SQL: {}", truncate_sql(sql, 60));
-                    }
-                }
-            } else {
-                println!();
-                println!("No breaking changes detected.");
-            }
+            print!("{}", format_metadata_text(&metadata));
         }
         OutputFormat::Json => {
-            let json = serde_json::json!({
-                "id": metadata.id,
-                "description": metadata.description,
-                "statement_count": metadata.statement_count,
-                "source_state_hash": metadata.source_state_hash,
-                "target_state_hash": metadata.target_state_hash,
-                "compiled_at": metadata.compiled_at,
-                "breaking_changes": metadata.breaking_changes.iter().map(|bc| {
-                    serde_json::json!({
-                        "description": bc.description,
-                        "mitigation": bc.mitigation.as_str(),
-                        "affected_sql": bc.affected_sql,
-                    })
-                }).collect::<Vec<_>>(),
-            });
-            println!("{}", serde_json::to_string_pretty(&json).unwrap());
+            println!("{}", format_metadata_json(&metadata));
         }
     }
-
-    Ok(())
 }
 
-/// Show SQL statements.
-fn show_sql(runtime: &MigrationRuntime, format: OutputFormat) -> Result<(), CliError> {
-    let statements = runtime.get_statements()?;
+/// Show test SQL statements.
+fn show_test_sql(format: OutputFormat) {
+    let statements = test_statements();
 
     match format {
         OutputFormat::Text => {
-            for stmt in &statements {
-                println!("-- {} ({})", stmt.description, stmt.sequence);
-                println!("{};", stmt.sql);
-                println!();
-            }
+            print!("{}", format_statements_text(&statements));
         }
         OutputFormat::Json => {
-            let json: Vec<_> = statements
-                .iter()
-                .map(|stmt| {
-                    serde_json::json!({
-                        "sequence": stmt.sequence,
-                        "description": stmt.description,
-                        "sql": stmt.sql,
-                    })
-                })
-                .collect();
-            println!("{}", serde_json::to_string_pretty(&json).unwrap());
+            println!("{}", format_statements_json(&statements));
         }
     }
-
-    Ok(())
 }
 
-/// Perform a dry run.
-fn dry_run(runtime: &MigrationRuntime, format: OutputFormat) -> Result<(), CliError> {
-    let statements = runtime.run_dry()?;
-
-    match format {
-        OutputFormat::Text => {
-            println!("Dry run - the following SQL would be executed:");
-            println!();
-            for (i, sql) in statements.iter().enumerate() {
-                println!("-- Statement {}", i + 1);
-                println!("{};", sql);
-                println!();
-            }
-            println!("Total: {} statement(s)", statements.len());
-        }
-        OutputFormat::Json => {
-            let json = serde_json::json!({
-                "statements": statements,
-                "count": statements.len(),
-            });
-            println!("{}", serde_json::to_string_pretty(&json).unwrap());
-        }
+/// Generate test metadata for development.
+fn test_metadata() -> MigrationMetadata {
+    MigrationMetadata {
+        id: "test-migration-abc123".to_string(),
+        description: "Add users table with email column".to_string(),
+        breaking_changes: vec![BreakingChange {
+            description: "Adding NOT NULL column without default".to_string(),
+            mitigation: MitigationStrategy::Backfill,
+            affected_sql: vec!["ALTER TABLE users ADD COLUMN email TEXT NOT NULL".to_string()],
+        }],
+        statement_count: 2,
+        source_state_hash: "source-hash-def456".to_string(),
+        target_state_hash: "target-hash-ghi789".to_string(),
+        compiled_at: "2024-01-15T10:00:00Z".to_string(),
     }
-
-    Ok(())
 }
 
-/// Execute the migration.
-async fn execute_migration(runtime: &MigrationRuntime, cli: &Cli) -> Result<(), CliError> {
-    // Require database URL for execution
-    let database_url = cli
-        .database_url
-        .as_ref()
-        .ok_or_else(|| CliError::missing_argument("--database-url"))?;
-
-    // Get metadata to check for breaking changes
-    let metadata = runtime.describe()?;
-
-    // Prompt for confirmation if there are breaking changes
-    if metadata.has_breaking_changes() && !cli.yes {
-        println!("Warning: This migration contains breaking changes:");
-        for bc in &metadata.breaking_changes {
-            println!("  - {} [{}]", bc.description, bc.mitigation);
-        }
-        println!();
-
-        if !confirm("Do you want to proceed?")? {
-            return Err(CliError::cancelled());
-        }
-    }
-
-    // Connect to database
-    println!("Connecting to database...");
-    let client = connect_database(database_url).await?;
-    let host_state = HostState::with_client(client);
-
-    // Execute migration
-    println!("Executing migration: {}", metadata.description);
-    let result_state = runtime.run(host_state)?;
-
-    println!();
-    println!("Migration completed successfully!");
-    println!(
-        "Executed {} statement(s)",
-        result_state.dry_run_statements().len()
-    );
-
-    Ok(())
+/// Generate test statements for development.
+fn test_statements() -> Vec<Statement> {
+    vec![
+        Statement {
+            sql: "CREATE TABLE users (\n    id SERIAL PRIMARY KEY,\n    name TEXT NOT NULL\n)"
+                .to_string(),
+            description: "Create users table".to_string(),
+            sequence: 1,
+        },
+        Statement {
+            sql: "ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''".to_string(),
+            description: "Add email column".to_string(),
+            sequence: 2,
+        },
+    ]
 }
 
-/// Prompt for user confirmation.
-fn confirm(prompt: &str) -> Result<bool, CliError> {
-    print!("{} [y/N] ", prompt);
-    io::stdout().flush().unwrap();
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
-
-    Ok(input.trim().to_lowercase() == "y" || input.trim().to_lowercase() == "yes")
-}
-
-/// Truncate SQL for display.
-fn truncate_sql(sql: &str, max_len: usize) -> String {
-    let sql = sql.replace('\n', " ").replace("  ", " ");
-    if sql.len() <= max_len {
-        sql
-    } else {
-        format!("{}...", &sql[..max_len - 3])
-    }
+// Silence unused warning for truncate_sql (imported for completeness)
+#[allow(dead_code)]
+fn _use_truncate_sql() {
+    let _ = truncate_sql("test", 10);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
 
-    mod output_format_tests {
-        use super::*;
-
-        #[test]
-        fn from_str_text() {
-            let format: OutputFormat = "text".parse().unwrap();
-            assert_eq!(format, OutputFormat::Text);
-        }
-
-        #[test]
-        fn from_str_json() {
-            let format: OutputFormat = "json".parse().unwrap();
-            assert_eq!(format, OutputFormat::Json);
-        }
-
-        #[test]
-        fn from_str_case_insensitive() {
-            let format: OutputFormat = "JSON".parse().unwrap();
-            assert_eq!(format, OutputFormat::Json);
-
-            let format: OutputFormat = "Text".parse().unwrap();
-            assert_eq!(format, OutputFormat::Text);
-        }
-
-        #[test]
-        fn from_str_unknown() {
-            let result: Result<OutputFormat, _> = "xml".parse();
-            assert!(result.is_err());
-        }
-
-        #[test]
-        fn default_is_text() {
-            assert_eq!(OutputFormat::default(), OutputFormat::Text);
-        }
+    #[test]
+    fn verify_cli() {
+        Cli::command().debug_assert();
     }
 
-    mod truncate_sql_tests {
-        use super::*;
-
-        #[test]
-        fn short_sql_unchanged() {
-            let sql = "SELECT 1";
-            assert_eq!(truncate_sql(sql, 20), "SELECT 1");
-        }
-
-        #[test]
-        fn long_sql_truncated() {
-            let sql = "SELECT * FROM very_long_table_name WHERE id = 1";
-            let truncated = truncate_sql(sql, 30);
-            assert!(truncated.len() <= 30);
-            assert!(truncated.ends_with("..."));
-        }
-
-        #[test]
-        fn newlines_replaced() {
-            let sql = "SELECT\n*\nFROM\ntable";
-            let result = truncate_sql(sql, 100);
-            assert!(!result.contains('\n'));
-        }
-
-        #[test]
-        fn double_spaces_collapsed() {
-            let sql = "SELECT  *  FROM  table";
-            let result = truncate_sql(sql, 100);
-            assert!(!result.contains("  "));
-        }
-
-        #[test]
-        fn exact_length_not_truncated() {
-            let sql = "12345678901234567890"; // 20 chars
-            assert_eq!(truncate_sql(sql, 20), sql);
-        }
-
-        #[test]
-        fn one_over_truncated() {
-            let sql = "123456789012345678901"; // 21 chars
-            let result = truncate_sql(sql, 20);
-            assert_eq!(result.len(), 20);
-            assert!(result.ends_with("..."));
-        }
+    #[test]
+    fn parse_describe() {
+        let cli = Cli::parse_from(["test", "--describe"]);
+        assert!(cli.describe);
     }
 
-    mod cli_tests {
-        use super::*;
-        use clap::CommandFactory;
+    #[test]
+    fn parse_show_sql() {
+        let cli = Cli::parse_from(["test", "--show-sql"]);
+        assert!(cli.show_sql);
+    }
 
-        #[test]
-        fn verify_cli() {
-            // This verifies that the CLI is properly configured
-            Cli::command().debug_assert();
-        }
+    #[test]
+    fn parse_format_json() {
+        let cli = Cli::parse_from(["test", "--format", "json"]);
+        assert_eq!(cli.format, CliOutputFormat::Json);
+    }
 
-        #[test]
-        fn parse_minimal() {
-            let cli = Cli::parse_from(["test", "--component", "test.wasm", "--describe"]);
-            assert_eq!(cli.component, Some(std::path::PathBuf::from("test.wasm")));
-            assert!(cli.describe);
-        }
+    #[test]
+    fn default_test_mode() {
+        let cli = Cli::parse_from(["test"]);
+        assert!(cli.test_mode);
+    }
 
-        #[test]
-        fn parse_with_database_url() {
-            let cli = Cli::parse_from([
-                "test",
-                "--component",
-                "test.wasm",
-                "--database-url",
-                "postgres://localhost/db",
-            ]);
-            assert_eq!(
-                cli.database_url,
-                Some("postgres://localhost/db".to_string())
-            );
-        }
+    #[test]
+    fn test_metadata_has_breaking_changes() {
+        let metadata = test_metadata();
+        assert!(metadata.has_breaking_changes());
+    }
 
-        #[test]
-        fn parse_dry_run() {
-            let cli = Cli::parse_from([
-                "test",
-                "--component",
-                "test.wasm",
-                "--dry-run",
-                "--describe",
-            ]);
-            assert!(cli.dry_run);
-        }
+    #[test]
+    fn test_statements_has_correct_count() {
+        let statements = test_statements();
+        assert_eq!(statements.len(), 2);
+    }
 
-        #[test]
-        fn parse_yes_flag() {
-            let cli = Cli::parse_from([
-                "test",
-                "--component",
-                "test.wasm",
-                "-y",
-                "--database-url",
-                "postgres://localhost/db",
-            ]);
-            assert!(cli.yes);
-        }
+    #[test]
+    fn cli_output_format_from_str() {
+        let text: CliOutputFormat = "text".parse().unwrap();
+        assert_eq!(text, CliOutputFormat::Text);
 
-        #[test]
-        fn parse_verbose() {
-            let cli = Cli::parse_from(["test", "--component", "test.wasm", "-v", "--describe"]);
-            assert!(cli.verbose);
-        }
+        let json: CliOutputFormat = "json".parse().unwrap();
+        assert_eq!(json, CliOutputFormat::Json);
+    }
 
-        #[test]
-        fn parse_format_json() {
-            let cli = Cli::parse_from([
-                "test",
-                "--component",
-                "test.wasm",
-                "--format",
-                "json",
-                "--describe",
-            ]);
-            assert_eq!(cli.format, OutputFormat::Json);
-        }
+    #[test]
+    fn cli_output_format_to_output_format() {
+        let text: OutputFormat = CliOutputFormat::Text.into();
+        assert_eq!(text, OutputFormat::Text);
 
-        #[test]
-        fn parse_show_sql() {
-            let cli = Cli::parse_from(["test", "--component", "test.wasm", "--show-sql"]);
-            assert!(cli.show_sql);
-        }
+        let json: OutputFormat = CliOutputFormat::Json.into();
+        assert_eq!(json, OutputFormat::Json);
     }
 }

@@ -23,7 +23,8 @@
 //! ```text
 //! crates/tern-migration-wit/
 //! └── wit/
-//!     └── migration.wit    # Main interface definitions
+//!     ├── migration.wit    # Migration component interface definitions
+//!     └── runner.wit       # Runner component (WASI CLI) world definition
 //! ```
 //!
 //! # Usage
@@ -84,14 +85,20 @@
 /// the WIT files.
 pub const WIT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/wit");
 
-/// The main WIT file name.
+/// The main WIT file name for migration components.
 pub const MAIN_WIT_FILE: &str = "migration.wit";
+
+/// The WIT file name for the runner component.
+pub const RUNNER_WIT_FILE: &str = "runner.wit";
 
 /// Current version of the WIT interface.
 pub const WIT_VERSION: &str = "0.1.0";
 
-/// Package identifier for the WIT interface.
+/// Package identifier for the migration interface.
 pub const WIT_PACKAGE: &str = "tern:migration@0.1.0";
+
+/// Package identifier for the runner interface.
+pub const RUNNER_WIT_PACKAGE: &str = "tern:runner@0.1.0";
 
 #[cfg(test)]
 mod tests {
@@ -328,5 +335,52 @@ mod tests {
             content.contains("sequence: u32"),
             "statement should have sequence field"
         );
+    }
+
+    #[test]
+    fn runner_wit_file_exists() {
+        let wit_file = Path::new(WIT_PATH).join(RUNNER_WIT_FILE);
+        assert!(
+            wit_file.exists(),
+            "Runner WIT file should exist at: {}",
+            wit_file.display()
+        );
+    }
+
+    #[test]
+    fn runner_wit_file_contains_package_declaration() {
+        let wit_file = Path::new(WIT_PATH).join(RUNNER_WIT_FILE);
+        let content =
+            std::fs::read_to_string(&wit_file).expect("Should be able to read runner WIT file");
+
+        assert!(
+            content.contains("package tern:runner@0.1.0"),
+            "Runner WIT file should contain package declaration"
+        );
+    }
+
+    #[test]
+    fn runner_wit_file_contains_world_definition() {
+        let wit_file = Path::new(WIT_PATH).join(RUNNER_WIT_FILE);
+        let content =
+            std::fs::read_to_string(&wit_file).expect("Should be able to read runner WIT file");
+
+        assert!(
+            content.contains("world tern-runner"),
+            "Runner WIT file should define tern-runner world"
+        );
+        assert!(
+            content.contains("import tern:migration/migration"),
+            "Runner world should import migration interface"
+        );
+        assert!(
+            content.contains("export wasi:cli/run"),
+            "Runner world should export WASI CLI run"
+        );
+    }
+
+    #[test]
+    fn runner_wit_version_matches_package() {
+        assert_eq!(RUNNER_WIT_PACKAGE, format!("tern:runner@{}", WIT_VERSION));
     }
 }

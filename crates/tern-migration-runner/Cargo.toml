@@ -2,53 +2,48 @@
 name = "tern-migration-runner"
 version = "0.1.0"
 edition = "2024"
-description = "WebAssembly runtime for executing Tern migration components"
+description = "WASI CLI application for executing Tern migration components"
 license = "MIT"
 repository = "https://github.com/wack/tern"
 
-[[bin]]
-name = "tern-migration-runner"
-path = "src/main.rs"
-
+# Build as a WASI component library
 [lib]
+crate-type = ["cdylib", "rlib"]
 name = "tern_migration_runner"
 path = "src/lib.rs"
 
+# Binary is only for native testing, not for WASI target
+[[bin]]
+name = "tern-migration-runner"
+path = "src/main.rs"
+# Only build binary for non-WASI targets
+required-features = ["native"]
+
 [dependencies]
-# WIT definitions from the sister crate
+# WIT definitions
 tern-migration-wit = { path = "../tern-migration-wit" }
-tern-migration-guest = { path = "../tern-migration-guest" }
 
-# WebAssembly runtime
-wasmtime = { version = "41", features = ["component-model"] }
+# Component model bindings generator
+# This generates Rust bindings from WIT files
+wit-bindgen = "0.41"
 
-# CLI framework
-clap = { version = "4", features = ["derive", "env"] }
-
-# Async runtime
-tokio = { version = "1", features = ["full", "sync"] }
-
-# PostgreSQL client
-tokio-postgres = "0.7"
-tokio-postgres-rustls = "0.13"
-rustls = "0.23"
-webpki-roots = "0.26"
-
-# Error handling
-miette = { version = "7", features = ["fancy"] }
-thiserror = "2"
-
-# Logging/tracing
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-
-# Serialization
+# Serialization for JSON output
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# Async trait support
-async-trait = "0.1"
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+# Dependencies only for native builds (testing)
+# The actual WASI runner doesn't need these
+clap = { version = "4", features = ["derive", "env"], optional = true }
+miette = { version = "7", features = ["fancy"], optional = true }
+thiserror = { version = "2", optional = true }
 
 [dev-dependencies]
-tempfile = "3"
 pretty_assertions = "1.4"
+
+[features]
+# Default features for WASI target (minimal)
+default = []
+
+# Native feature enables CLI binary for testing
+native = ["dep:clap", "dep:miette", "dep:thiserror"]
