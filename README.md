@@ -1,5 +1,9 @@
 # Tern
 
+[![CI](https://github.com/wack/tern/actions/workflows/on-push.yml/badge.svg)](https://github.com/wack/tern/actions/workflows/on-push.yml)
+[![Rust](https://img.shields.io/badge/rust-2024_edition-orange.svg)](https://www.rust-lang.org)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **A database migration tool that compiles schema changes into standalone, self-documenting executables.**
 
 Named after the Arctic tern—a bird that makes the longest migration of any species—Tern helps you navigate the journey from one database schema to another with confidence.
@@ -167,25 +171,13 @@ src/
 
 The `Catalog` trait abstracts database queries, enabling comprehensive unit testing without a live database.
 
-## Development
+## Contributing
 
-```bash
-# Install development tools
-cargo install cargo-make cargo-nextest
+We welcome GitHub issues and pull requests.
 
-# Run the full CI pipeline
-cargo make ci-flow
+Before implementing a new feature or significant change, please open an issue to discuss it with a maintainer. This helps ensure your contribution aligns with the project's direction and avoids duplicate effort.
 
-# Run tests
-cargo make test
-
-# Format and lint
-cargo make format
-cargo make clippy
-
-# Watch mode for development
-cargo make bacon
-```
+See [CONTRIBUTORS.md](CONTRIBUTORS.md) for development setup and guidelines.
 
 ## Supported Schema Objects
 
