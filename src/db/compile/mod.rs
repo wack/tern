@@ -1,15 +1,30 @@
-//! Migration compilation to WebAssembly components.
+//! Migration compilation to WebAssembly components and standalone executables.
 //!
 //! This module provides the infrastructure for compiling database migrations
-//! into standalone WebAssembly components. These components can be embedded
-//! in platform-native executables or run directly in a Wasm runtime.
+//! into standalone WebAssembly components and platform-native executables.
+//! These can be run without requiring Tern to be installed.
 //!
 //! # Overview
 //!
 //! The compilation pipeline:
 //!
 //! ```text
-//! Migration + MigrationPlan
+//! Source Schema + Target Schema
+//!         │
+//!         ▼
+//! ┌───────────────────────┐
+//! │ compile_migration()   │  ─── High-level API
+//! └───────────────────────┘
+//!         │
+//!         ▼
+//! ┌───────────────────┐
+//! │ Schema Diff       │  ─── Compare source to target
+//! └───────────────────┘
+//!         │
+//!         ▼
+//! ┌───────────────────┐
+//! │ MigrationPlan     │  ─── Ordered operations
+//! └───────────────────┘
 //!         │
 //!         ▼
 //! ┌───────────────────┐
@@ -21,9 +36,35 @@
 //! ├── source_code (Rust)
 //! ├── statements
 //! └── breaking_changes
+//!         │
+//!         ▼ (optional)
+//! ┌───────────────────┐
+//! │ ExecutableBuilder │  ─── Builds platform-native executable
+//! └───────────────────┘
 //! ```
 //!
 //! # Usage
+//!
+//! ## High-Level API
+//!
+//! The simplest way to compile a migration is using the `compile_migration` function:
+//!
+//! ```ignore
+//! use tern::db::compile::{compile_migration, CompileOptions, Target};
+//! use tern::db::model::Namespace;
+//!
+//! let result = compile_migration(
+//!     &source_namespace,
+//!     &target_namespace,
+//!     CompileOptions::new("Add email column to users"),
+//! )?;
+//!
+//! println!("Generated {} statements", result.compilation.statement_count());
+//! ```
+//!
+//! ## Low-Level API
+//!
+//! For more control, you can use the compiler directly:
 //!
 //! ```ignore
 //! use tern::db::compile::{MigrationCompiler, CompilerConfig};
@@ -83,14 +124,268 @@
 //! - Warn users about potentially dangerous operations
 //! - Require explicit confirmation for destructive changes
 //! - Provide guidance on safe migration patterns
+//!
+//! # Standalone Executables
+//!
+//! Use the `ExecutableBuilder` to create platform-native executables:
+//!
+//! ```ignore
+//! use tern::db::compile::{ExecutableBuilder, Target};
+//! use std::path::Path;
+//!
+//! let builder = ExecutableBuilder::new();
+//! let result = builder.build(
+//!     &wasm_component_bytes,
+//!     Path::new("./migrations/add_email"),
+//!     Target::Native,
+//! )?;
+//! ```
 
 mod codegen;
 mod error;
+mod executable;
 
 pub use codegen::{
     CompilationResult, CompiledBreakingChange, CompiledStatement, CompilerConfig, MigrationCompiler,
 };
 pub use error::CompileError;
+pub use executable::{BuildResult, ExecutableBuilder, Target};
+
+use crate::db::diff::breaking::analyze_breaking_changes;
+use crate::db::diff::diff_namespaces;
+use crate::db::migrate::MigrationPlan;
+use crate::db::model::Namespace;
+use crate::db::state::{Migration, StateHash};
+
+// =============================================================================
+// Compile Options
+// =============================================================================
+
+/// Options for compiling a migration.
+///
+/// Controls how the migration is compiled, including the description,
+/// target platform, and compiler configuration.
+#[derive(Debug, Clone)]
+pub struct CompileOptions {
+    /// Human-readable description of the migration.
+    pub description: String,
+    /// Target platform for executable generation (if building executable).
+    pub target: Target,
+    /// Configuration for the source code compiler.
+    pub compiler_config: CompilerConfig,
+}
+
+impl CompileOptions {
+    /// Creates new compile options with the given description.
+    ///
+    /// Uses default values for target (native) and compiler config.
+    pub fn new(description: impl Into<String>) -> Self {
+        Self {
+            description: description.into(),
+            target: Target::Native,
+            compiler_config: CompilerConfig::default(),
+        }
+    }
+
+    /// Sets the target platform for executable generation.
+    pub fn with_target(mut self, target: Target) -> Self {
+        self.target = target;
+        self
+    }
+
+    /// Sets the compiler configuration.
+    pub fn with_compiler_config(mut self, config: CompilerConfig) -> Self {
+        self.compiler_config = config;
+        self
+    }
+
+    /// Creates options configured for macro-only output.
+    pub fn macro_only(description: impl Into<String>) -> Self {
+        Self {
+            description: description.into(),
+            target: Target::Native,
+            compiler_config: CompilerConfig::macro_only(),
+        }
+    }
+}
+
+// =============================================================================
+// Compilation Pipeline Result
+// =============================================================================
+
+/// Result of the full migration compilation pipeline.
+///
+/// Contains all artifacts from compiling a migration, including the
+/// migration record, the compilation result, and the plan.
+#[derive(Debug, Clone)]
+pub struct MigrationCompilationResult {
+    /// The migration record.
+    pub migration: Migration,
+    /// The compiled source code and metadata.
+    pub compilation: CompilationResult,
+    /// The migration plan with ordered operations.
+    pub plan: MigrationPlan,
+    /// Source state hash.
+    pub source_hash: StateHash,
+    /// Target state hash.
+    pub target_hash: StateHash,
+}
+
+impl MigrationCompilationResult {
+    /// Returns the migration ID as a hex string.
+    pub fn migration_id(&self) -> String {
+        self.migration.id.to_hex()
+    }
+
+    /// Returns the number of SQL statements.
+    pub fn statement_count(&self) -> usize {
+        self.compilation.statement_count()
+    }
+
+    /// Returns true if there are breaking changes.
+    pub fn has_breaking_changes(&self) -> bool {
+        self.compilation.has_breaking_changes()
+    }
+
+    /// Returns true if there are destructive changes.
+    pub fn has_destructive_changes(&self) -> bool {
+        self.compilation.has_destructive_changes()
+    }
+
+    /// Returns the generated source code.
+    pub fn source_code(&self) -> &str {
+        &self.compilation.source_code
+    }
+
+    /// Returns an iterator over the SQL statements.
+    pub fn statements(&self) -> impl Iterator<Item = &CompiledStatement> {
+        self.compilation.statements.iter()
+    }
+}
+
+// =============================================================================
+// High-Level Compilation API
+// =============================================================================
+
+/// Compiles a migration from source schema to target schema.
+///
+/// This is the high-level API that handles the full compilation pipeline:
+/// 1. Computes the diff between source and target schemas
+/// 2. Analyzes breaking changes
+/// 3. Creates a migration plan with ordered operations
+/// 4. Generates the migration record
+/// 5. Compiles to Rust source code
+///
+/// # Arguments
+///
+/// * `source` - The source schema (current state)
+/// * `target` - The target schema (desired state)
+/// * `options` - Compilation options including description
+///
+/// # Returns
+///
+/// Returns a `MigrationCompilationResult` containing the migration record,
+/// compiled source code, and plan.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The schemas are identical (no changes to migrate)
+/// - The compilation fails
+///
+/// # Example
+///
+/// ```ignore
+/// use tern::db::compile::{compile_migration, CompileOptions};
+/// use tern::db::model::Namespace;
+///
+/// let source = load_current_schema().await?;
+/// let target = load_target_schema()?;
+///
+/// let result = compile_migration(&source, &target, CompileOptions::new("Add users table"))?;
+///
+/// println!("Migration ID: {}", result.migration_id());
+/// println!("Statements: {}", result.statement_count());
+/// if result.has_breaking_changes() {
+///     println!("Warning: This migration has breaking changes!");
+/// }
+/// ```
+pub fn compile_migration(
+    source: &Namespace,
+    target: &Namespace,
+    options: CompileOptions,
+) -> Result<MigrationCompilationResult, CompileError> {
+    // Step 1: Compute the diff
+    let diff = diff_namespaces(source, target);
+
+    // Step 2: Create the migration plan
+    let plan = MigrationPlan::from_diff(&diff);
+
+    // Check if there are any changes
+    if plan.is_empty() {
+        return Err(CompileError::no_changes());
+    }
+
+    // Step 3: Analyze breaking changes
+    let breaking_changes = analyze_breaking_changes(&diff);
+
+    // Step 4: Compute state hashes
+    let source_hash = StateHash::from_namespace(source);
+    let target_hash = StateHash::from_namespace(target);
+
+    // Step 5: Create the migration record
+    let migration = Migration::new(
+        &options.description,
+        plan.operations.clone(),
+        source_hash,
+        target_hash,
+        breaking_changes.into_changes(),
+    );
+
+    // Step 6: Compile to source code
+    let compiler = MigrationCompiler::with_config(options.compiler_config);
+    let compilation = compiler.compile(&migration, &plan)?;
+
+    Ok(MigrationCompilationResult {
+        migration,
+        compilation,
+        plan,
+        source_hash,
+        target_hash,
+    })
+}
+
+/// Compiles a migration and verifies it produces the expected operations.
+///
+/// This is useful for testing and validation. It compiles the migration
+/// and returns the result along with the SQL statements for inspection.
+///
+/// # Arguments
+///
+/// * `source` - The source schema (current state)
+/// * `target` - The target schema (desired state)
+/// * `description` - Human-readable description of the migration
+///
+/// # Returns
+///
+/// Returns a tuple of (MigrationCompilationResult, Vec<String>) where
+/// the vector contains all SQL statements that would be executed.
+pub fn compile_and_extract_sql(
+    source: &Namespace,
+    target: &Namespace,
+    description: impl Into<String>,
+) -> Result<(MigrationCompilationResult, Vec<String>), CompileError> {
+    let result = compile_migration(source, target, CompileOptions::new(description))?;
+
+    let sql_statements: Vec<String> = result
+        .compilation
+        .statements
+        .iter()
+        .map(|s| s.sql.clone())
+        .collect();
+
+    Ok((result, sql_statements))
+}
 
 #[cfg(test)]
 mod tests {
@@ -396,5 +691,278 @@ mod tests {
         // Should start directly with macro, no header
         assert!(result.source_code.starts_with("define_migration!"));
         assert!(!result.source_code.contains("use tern_migration_guest"));
+    }
+
+    // =========================================================================
+    // High-Level API Tests
+    // =========================================================================
+
+    mod compile_options_tests {
+        use super::*;
+
+        #[test]
+        fn new_creates_with_description() {
+            let options = CompileOptions::new("Test migration");
+            assert_eq!(options.description, "Test migration");
+            assert_eq!(options.target, Target::Native);
+        }
+
+        #[test]
+        fn with_target_sets_target() {
+            let options = CompileOptions::new("Test").with_target(Target::X86_64LinuxMusl);
+            assert_eq!(options.target, Target::X86_64LinuxMusl);
+        }
+
+        #[test]
+        fn with_compiler_config_sets_config() {
+            let config = CompilerConfig::macro_only();
+            let options = CompileOptions::new("Test").with_compiler_config(config.clone());
+            assert!(!options.compiler_config.include_full_file);
+        }
+
+        #[test]
+        fn macro_only_creates_correct_options() {
+            let options = CompileOptions::macro_only("Test");
+            assert_eq!(options.description, "Test");
+            assert!(!options.compiler_config.include_full_file);
+        }
+    }
+
+    mod compile_migration_tests {
+        use super::*;
+
+        #[test]
+        fn compile_migration_add_column() {
+            let source = Namespace {
+                oid: Oid::new(1),
+                name: test_schema(),
+                tables: vec![simple_table_with_columns(
+                    "users",
+                    vec![simple_column("id", "integer")],
+                )],
+                views: vec![],
+                sequences: vec![],
+                enums: vec![],
+                comment: None,
+            };
+
+            let target = Namespace {
+                oid: Oid::new(1),
+                name: test_schema(),
+                tables: vec![simple_table_with_columns(
+                    "users",
+                    vec![
+                        simple_column("id", "integer"),
+                        simple_column("email", "text"),
+                    ],
+                )],
+                views: vec![],
+                sequences: vec![],
+                enums: vec![],
+                comment: None,
+            };
+
+            let result =
+                compile_migration(&source, &target, CompileOptions::new("Add email column"))
+                    .unwrap();
+
+            assert!(result.statement_count() > 0);
+            assert!(!result.has_breaking_changes());
+            assert!(result.source_code().contains("ALTER TABLE"));
+            assert!(result.source_code().contains("email"));
+        }
+
+        #[test]
+        fn compile_migration_returns_error_for_no_changes() {
+            let source = Namespace::empty("public");
+            let target = Namespace::empty("public");
+
+            let result = compile_migration(&source, &target, CompileOptions::new("No changes"));
+
+            assert!(matches!(result, Err(CompileError::NoChanges)));
+        }
+
+        #[test]
+        fn compile_migration_detects_breaking_changes() {
+            let source = Namespace {
+                oid: Oid::new(1),
+                name: test_schema(),
+                tables: vec![simple_table_with_columns(
+                    "users",
+                    vec![simple_column("id", "integer")],
+                )],
+                views: vec![],
+                sequences: vec![],
+                enums: vec![],
+                comment: None,
+            };
+
+            let target = Namespace {
+                oid: Oid::new(1),
+                name: test_schema(),
+                tables: vec![],
+                views: vec![],
+                sequences: vec![],
+                enums: vec![],
+                comment: None,
+            };
+
+            let result =
+                compile_migration(&source, &target, CompileOptions::new("Drop users table"))
+                    .unwrap();
+
+            assert!(result.has_breaking_changes());
+            assert!(result.has_destructive_changes());
+        }
+
+        #[test]
+        fn compile_migration_generates_migration_id() {
+            let source = Namespace::empty("public");
+            let target = Namespace {
+                oid: Oid::new(1),
+                name: test_schema(),
+                tables: vec![simple_table_with_columns(
+                    "users",
+                    vec![simple_column("id", "integer")],
+                )],
+                views: vec![],
+                sequences: vec![],
+                enums: vec![],
+                comment: None,
+            };
+
+            let result =
+                compile_migration(&source, &target, CompileOptions::new("Create users table"))
+                    .unwrap();
+
+            // Migration ID should be a 64-character hex string (256 bits)
+            let id = result.migration_id();
+            assert_eq!(id.len(), 64);
+            assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
+        }
+
+        #[test]
+        fn compile_migration_computes_state_hashes() {
+            let source = Namespace::empty("public");
+            let target = Namespace {
+                oid: Oid::new(1),
+                name: test_schema(),
+                tables: vec![simple_table_with_columns(
+                    "users",
+                    vec![simple_column("id", "integer")],
+                )],
+                views: vec![],
+                sequences: vec![],
+                enums: vec![],
+                comment: None,
+            };
+
+            let result =
+                compile_migration(&source, &target, CompileOptions::new("Create users table"))
+                    .unwrap();
+
+            // Hashes should be different since schemas are different
+            assert_ne!(result.source_hash, result.target_hash);
+        }
+
+        #[test]
+        fn compile_migration_includes_plan() {
+            let source = Namespace::empty("public");
+            let target = Namespace {
+                oid: Oid::new(1),
+                name: test_schema(),
+                tables: vec![simple_table_with_columns(
+                    "users",
+                    vec![simple_column("id", "integer")],
+                )],
+                views: vec![],
+                sequences: vec![],
+                enums: vec![],
+                comment: None,
+            };
+
+            let result =
+                compile_migration(&source, &target, CompileOptions::new("Create users table"))
+                    .unwrap();
+
+            assert!(!result.plan.is_empty());
+            assert!(result.plan.len() > 0);
+        }
+    }
+
+    mod compile_and_extract_sql_tests {
+        use super::*;
+
+        #[test]
+        fn extracts_sql_statements() {
+            let source = Namespace::empty("public");
+            let target = Namespace {
+                oid: Oid::new(1),
+                name: test_schema(),
+                tables: vec![simple_table_with_columns(
+                    "users",
+                    vec![simple_column("id", "integer")],
+                )],
+                views: vec![],
+                sequences: vec![],
+                enums: vec![],
+                comment: None,
+            };
+
+            let (result, sql) =
+                compile_and_extract_sql(&source, &target, "Create users table").unwrap();
+
+            assert!(!sql.is_empty());
+            assert_eq!(sql.len(), result.statement_count());
+
+            // At least one statement should contain CREATE TABLE
+            assert!(sql.iter().any(|s| s.contains("CREATE TABLE")));
+        }
+
+        #[test]
+        fn returns_error_for_no_changes() {
+            let source = Namespace::empty("public");
+            let target = Namespace::empty("public");
+
+            let result = compile_and_extract_sql(&source, &target, "No changes");
+
+            assert!(matches!(result, Err(CompileError::NoChanges)));
+        }
+    }
+
+    mod migration_compilation_result_tests {
+        use super::*;
+
+        #[test]
+        fn statements_iterator_works() {
+            let source = Namespace::empty("public");
+            let target = Namespace {
+                oid: Oid::new(1),
+                name: test_schema(),
+                tables: vec![simple_table_with_columns(
+                    "users",
+                    vec![
+                        simple_column("id", "integer"),
+                        simple_column("name", "text"),
+                    ],
+                )],
+                views: vec![],
+                sequences: vec![],
+                enums: vec![],
+                comment: None,
+            };
+
+            let result =
+                compile_migration(&source, &target, CompileOptions::new("Create users table"))
+                    .unwrap();
+
+            let statements: Vec<_> = result.statements().collect();
+            assert!(!statements.is_empty());
+
+            // All statements should have SQL content
+            for stmt in statements {
+                assert!(!stmt.sql.is_empty());
+            }
+        }
     }
 }
