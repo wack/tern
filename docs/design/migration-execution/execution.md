@@ -142,70 +142,236 @@ Each migration is uniquely identified by a **content-addressable hash** (`Migrat
 - The source schema state hash
 - Optionally, a user-provided description
 
+We use [XxHash3](https://github.com/shepmaster/twox-hash) with 64-bit output for hashing. XxHash3 is an extremely fast, high-quality hash function that provides excellent distribution and is suitable for content-addressable identifiers. The 64-bit output provides sufficient collision resistance for migration identification while keeping IDs compact.
+
 ```rust
 /// A content-addressable identifier for a migration.
 ///
 /// The hash is computed from the migration's operations and metadata,
 /// ensuring that identical migrations produce identical IDs regardless
 /// of when or where they were generated.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct MigrationId(pub [u8; 32]); // SHA-256 hash
+///
+/// Uses XxHash3 64-bit for fast, high-quality hashing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MigrationId(pub u64);
 
 impl MigrationId {
+    /// Seed value for migration ID hashing.
+    /// This is fixed to ensure hash stability across versions.
+    const SEED: u64 = 0x7465_726e_6d69_6772; // "ternmigr" as bytes
+
     /// Compute the migration ID from its content.
     pub fn from_content(
         operations: &[Operation],
         parent_state_hash: &StateHash,
         description: &str,
     ) -> Self {
-        use sha2::{Sha256, Digest};
+        use std::hash::Hasher;
+        use twox_hash::XxHash3_64;
 
-        let mut hasher = Sha256::new();
+        let mut hasher = XxHash3_64::with_seed(Self::SEED);
 
         // Hash the parent state
-        hasher.update(parent_state_hash.as_bytes());
+        hasher.write_u64(parent_state_hash.0);
 
-        // Hash the operations (using canonical serialization)
+        // Hash the operations (using canonical JSON serialization)
         let ops_json = serde_json::to_vec(operations)
             .expect("operations should be serializable");
-        hasher.update(&ops_json);
+        hasher.write(&ops_json);
 
         // Hash the description
-        hasher.update(description.as_bytes());
+        hasher.write(description.as_bytes());
 
-        let result = hasher.finalize();
-        Self(result.into())
+        Self(hasher.finish())
     }
 
-    /// Format as a short hex string (first 8 characters).
+    /// Create a MigrationId from a raw hash value.
+    pub fn from_raw(hash: u64) -> Self {
+        Self(hash)
+    }
+
+    /// Get the raw hash value.
+    pub fn as_u64(&self) -> u64 {
+        self.0
+    }
+
+    /// Format as a short hex string (first 8 characters / 32 bits).
     pub fn short(&self) -> String {
-        hex::encode(&self.0[..4])
+        format!("{:08x}", (self.0 >> 32) as u32)
     }
 
-    /// Format as full hex string.
+    /// Format as full hex string (16 characters / 64 bits).
     pub fn to_hex(&self) -> String {
-        hex::encode(&self.0)
+        format!("{:016x}", self.0)
+    }
+
+    /// A zero migration ID, used for the initial/baseline state.
+    pub fn zero() -> Self {
+        Self(0)
+    }
+}
+
+impl std::fmt::Display for MigrationId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_hex())
     }
 }
 
 /// A hash of the schema state.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct StateHash(pub [u8; 32]);
+///
+/// Uses XxHash3 64-bit for fast, high-quality hashing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct StateHash(pub u64);
 
 impl StateHash {
+    /// Seed value for state hashing.
+    /// This is fixed to ensure hash stability across versions.
+    const SEED: u64 = 0x7465_726e_7374_6174; // "ternstat" as bytes
+
     /// Compute the state hash from a namespace.
     pub fn from_namespace(namespace: &Namespace) -> Self {
-        use sha2::{Sha256, Digest};
+        use std::hash::Hasher;
+        use twox_hash::XxHash3_64;
 
-        let mut hasher = Sha256::new();
+        let mut hasher = XxHash3_64::with_seed(Self::SEED);
         let json = serde_json::to_vec(namespace)
             .expect("namespace should be serializable");
-        hasher.update(&json);
+        hasher.write(&json);
 
-        Self(hasher.finalize().into())
+        Self(hasher.finish())
+    }
+
+    /// Create a StateHash from a raw hash value.
+    pub fn from_raw(hash: u64) -> Self {
+        Self(hash)
+    }
+
+    /// Get the raw hash value.
+    pub fn as_u64(&self) -> u64 {
+        self.0
+    }
+
+    /// Format as full hex string.
+    pub fn to_hex(&self) -> String {
+        format!("{:016x}", self.0)
+    }
+
+    /// A zero state hash, representing an empty/initial state.
+    pub fn zero() -> Self {
+        Self(0)
+    }
+}
+
+impl std::fmt::Display for StateHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_hex())
     }
 }
 ```
+
+### Hash Stability
+
+Because migration and state hashes are persisted and used to identify migrations across different machines and over time, hash stability is critical. The implementation ensures stability through:
+
+1. **Fixed seed values**: The seed constants are derived from ASCII strings and will never change
+2. **Canonical JSON serialization**: Operations and namespaces are serialized to JSON in a deterministic order (serde_json with sorted keys)
+3. **Version-locked algorithm**: XxHash3 is a finalized algorithm that will not change
+
+```rust
+#[cfg(test)]
+mod hash_stability_tests {
+    use super::*;
+
+    /// These tests verify that hash values remain stable across versions.
+    /// If any of these tests fail, it indicates a breaking change in the
+    /// hash algorithm that would invalidate existing migration histories.
+    ///
+    /// DO NOT UPDATE THESE EXPECTED VALUES unless you are intentionally
+    /// making a breaking change to the hash format.
+
+    #[test]
+    fn migration_id_empty_operations_is_stable() {
+        let parent_hash = StateHash::zero();
+        let operations: Vec<Operation> = vec![];
+        let description = "";
+
+        let id = MigrationId::from_content(&operations, &parent_hash, description);
+
+        // This value must remain stable across versions
+        assert_eq!(
+            id.to_hex(),
+            "f4a39433a56a8d0b",
+            "MigrationId hash for empty operations has changed! This is a breaking change."
+        );
+    }
+
+    #[test]
+    fn migration_id_with_description_is_stable() {
+        let parent_hash = StateHash::zero();
+        let operations: Vec<Operation> = vec![];
+        let description = "Add users table";
+
+        let id = MigrationId::from_content(&operations, &parent_hash, description);
+
+        // This value must remain stable across versions
+        assert_eq!(
+            id.to_hex(),
+            "8c3b2a1d4e5f6078",
+            "MigrationId hash with description has changed! This is a breaking change."
+        );
+    }
+
+    #[test]
+    fn migration_id_with_parent_hash_is_stable() {
+        let parent_hash = StateHash::from_raw(0x1234567890abcdef);
+        let operations: Vec<Operation> = vec![];
+        let description = "";
+
+        let id = MigrationId::from_content(&operations, &parent_hash, description);
+
+        // This value must remain stable across versions
+        assert_eq!(
+            id.to_hex(),
+            "a1b2c3d4e5f60718",
+            "MigrationId hash with parent hash has changed! This is a breaking change."
+        );
+    }
+
+    #[test]
+    fn state_hash_empty_namespace_is_stable() {
+        let namespace = Namespace::empty("public");
+
+        let hash = StateHash::from_namespace(&namespace);
+
+        // This value must remain stable across versions
+        assert_eq!(
+            hash.to_hex(),
+            "d4c3b2a190785634",
+            "StateHash for empty namespace has changed! This is a breaking change."
+        );
+    }
+
+    #[test]
+    fn migration_id_short_format() {
+        let id = MigrationId::from_raw(0x1234567890abcdef);
+
+        assert_eq!(id.short(), "12345678");
+        assert_eq!(id.to_hex(), "1234567890abcdef");
+    }
+
+    #[test]
+    fn state_hash_zero() {
+        assert_eq!(StateHash::zero().to_hex(), "0000000000000000");
+    }
+
+    #[test]
+    fn migration_id_zero() {
+        assert_eq!(MigrationId::zero().to_hex(), "0000000000000000");
+    }
+}
+```
+
+**Note**: The expected hash values in the stability tests above are placeholders. When implementing, run the tests once to capture the actual hash values, then update the expected values. Once set, these values must never change.
 
 ### Migration Record
 
@@ -2410,8 +2576,7 @@ tempfile = "3"
 chrono = { version = "0.4", features = ["serde"] }
 
 # New dependencies for state backend
-sha2 = "0.10"              # Content-addressable hashing
-hex = "0.4"                # Hex encoding for hash display
+twox-hash = "2"            # XxHash3 64-bit for content-addressable hashing
 async-trait = "0.1"        # For async StateBackend trait
 ```
 
