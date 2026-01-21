@@ -3,6 +3,7 @@ pub mod diff;
 pub mod history;
 pub mod migrate;
 pub mod model;
+pub mod pglite;
 pub mod query;
 pub mod schema;
 pub mod state;
