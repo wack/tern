@@ -11,6 +11,7 @@ This document describes the design for compiling database migrations into standa
 3. **No runtime dependencies**: Users don't need Tern installed to run migrations
 4. **Breaking change warnings**: Warn users about potentially dangerous operations
 5. **Inspectable artifacts**: Extract metadata and SQL without executing
+6. **State-based tracking**: Maintain migration history in a state backend rather than comparing two live databases
 
 ### Non-Goals (Deferred)
 
@@ -93,6 +94,450 @@ This document describes the design for compiling database migrations into standa
 
 ---
 
+## Migration State Backend
+
+### Motivation
+
+Rather than comparing two live databases to generate migrations (the original `--from` and `--to` approach), Tern uses a **state backend** to track migration history. This provides several advantages:
+
+1. **Reproducibility**: The exact sequence of migrations can be replayed on any database
+2. **Auditability**: Full history of schema changes is preserved
+3. **Offline operation**: Migrations can be generated without connecting to a "source" database
+4. **Team collaboration**: State files can be checked into version control
+
+### Schema State Model
+
+The state backend stores two key pieces of information:
+
+1. **Current schema state**: A serialized `Namespace` representing the expected database schema after all migrations have been applied
+2. **Migration history**: An ordered list of migrations that have been applied, each identified by a content-addressable hash
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         State Backend                               │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │  Schema State (Namespace)                                    │   │
+│  │  • Serialized representation of expected database schema     │   │
+│  │  • Tables, columns, constraints, indexes, enums, sequences   │   │
+│  │  • Serves as the "from" state for migration generation       │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │  Migration History                                           │   │
+│  │  • Ordered list of applied migrations                        │   │
+│  │  • Each migration identified by MigrationId (content hash)   │   │
+│  │  • Contains operations and metadata                          │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Migration Identification
+
+Each migration is uniquely identified by a **content-addressable hash** (`MigrationId`). This hash is computed from:
+
+- The operations in the migration (serialized `Vec<Operation>`)
+- The source schema state hash
+- Optionally, a user-provided description
+
+```rust
+/// A content-addressable identifier for a migration.
+///
+/// The hash is computed from the migration's operations and metadata,
+/// ensuring that identical migrations produce identical IDs regardless
+/// of when or where they were generated.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MigrationId(pub [u8; 32]); // SHA-256 hash
+
+impl MigrationId {
+    /// Compute the migration ID from its content.
+    pub fn from_content(
+        operations: &[Operation],
+        parent_state_hash: &StateHash,
+        description: &str,
+    ) -> Self {
+        use sha2::{Sha256, Digest};
+
+        let mut hasher = Sha256::new();
+
+        // Hash the parent state
+        hasher.update(parent_state_hash.as_bytes());
+
+        // Hash the operations (using canonical serialization)
+        let ops_json = serde_json::to_vec(operations)
+            .expect("operations should be serializable");
+        hasher.update(&ops_json);
+
+        // Hash the description
+        hasher.update(description.as_bytes());
+
+        let result = hasher.finalize();
+        Self(result.into())
+    }
+
+    /// Format as a short hex string (first 8 characters).
+    pub fn short(&self) -> String {
+        hex::encode(&self.0[..4])
+    }
+
+    /// Format as full hex string.
+    pub fn to_hex(&self) -> String {
+        hex::encode(&self.0)
+    }
+}
+
+/// A hash of the schema state.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct StateHash(pub [u8; 32]);
+
+impl StateHash {
+    /// Compute the state hash from a namespace.
+    pub fn from_namespace(namespace: &Namespace) -> Self {
+        use sha2::{Sha256, Digest};
+
+        let mut hasher = Sha256::new();
+        let json = serde_json::to_vec(namespace)
+            .expect("namespace should be serializable");
+        hasher.update(&json);
+
+        Self(hasher.finalize().into())
+    }
+}
+```
+
+### Migration Record
+
+A recorded migration contains all information needed to understand and replay the migration:
+
+```rust
+/// A recorded migration in the history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Migration {
+    /// Unique identifier (content hash).
+    pub id: MigrationId,
+
+    /// Human-readable description.
+    pub description: String,
+
+    /// When the migration was created (not applied).
+    pub created_at: DateTime<Utc>,
+
+    /// The operations that make up this migration.
+    pub operations: Vec<Operation>,
+
+    /// Hash of the schema state before this migration.
+    pub parent_state_hash: StateHash,
+
+    /// Hash of the schema state after this migration.
+    pub resulting_state_hash: StateHash,
+
+    /// Breaking changes detected in this migration.
+    pub breaking_changes: Vec<BreakingChange>,
+
+    /// Optional: the full schema state after this migration.
+    /// Included for checkpoint migrations to allow fast state reconstruction.
+    pub checkpoint_state: Option<Namespace>,
+}
+```
+
+### State Backend Trait
+
+The state backend is abstracted behind a trait, allowing different storage implementations:
+
+```rust
+/// Trait for migration state storage backends.
+#[async_trait]
+pub trait StateBackend: Send + Sync {
+    /// Get the current schema state.
+    async fn get_current_state(&self) -> Result<Namespace, StateError>;
+
+    /// Get the state hash of the current schema.
+    async fn get_current_state_hash(&self) -> Result<StateHash, StateError>;
+
+    /// Get the full migration history.
+    async fn get_history(&self) -> Result<Vec<Migration>, StateError>;
+
+    /// Get a specific migration by ID.
+    async fn get_migration(&self, id: &MigrationId) -> Result<Option<Migration>, StateError>;
+
+    /// Record a new migration and update the current state.
+    async fn record_migration(
+        &self,
+        migration: &Migration,
+        new_state: &Namespace,
+    ) -> Result<(), StateError>;
+
+    /// Check if a migration has been applied.
+    async fn is_applied(&self, id: &MigrationId) -> Result<bool, StateError>;
+
+    /// Get the schema state at a specific point in history.
+    async fn get_state_at(&self, migration_id: &MigrationId) -> Result<Namespace, StateError>;
+
+    /// Initialize the backend with an initial schema state.
+    async fn initialize(&self, initial_state: &Namespace) -> Result<(), StateError>;
+}
+```
+
+### Backend Implementations
+
+#### Local File Backend
+
+The local file backend stores state in the filesystem, suitable for projects that want to check migration state into version control:
+
+```
+.tern/
+├── state.json              # Current schema state (Namespace)
+├── state.hash              # Current state hash (for quick comparison)
+└── migrations/
+    ├── index.json          # Ordered list of migration IDs
+    ├── 1a2b3c4d.json       # Individual migration files
+    ├── 5e6f7g8h.json
+    └── ...
+```
+
+```rust
+/// Local filesystem state backend.
+pub struct LocalFileBackend {
+    /// Root directory for state files.
+    root: PathBuf,
+}
+
+impl LocalFileBackend {
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+
+    pub fn open(project_root: impl AsRef<Path>) -> Result<Self, StateError> {
+        let root = project_root.as_ref().join(".tern");
+        if !root.exists() {
+            return Err(StateError::NotInitialized);
+        }
+        Ok(Self { root })
+    }
+
+    pub fn init(project_root: impl AsRef<Path>) -> Result<Self, StateError> {
+        let root = project_root.as_ref().join(".tern");
+        std::fs::create_dir_all(&root)?;
+        std::fs::create_dir_all(root.join("migrations"))?;
+
+        // Initialize empty index
+        let index = MigrationIndex { migrations: vec![] };
+        let index_path = root.join("migrations/index.json");
+        std::fs::write(&index_path, serde_json::to_string_pretty(&index)?)?;
+
+        Ok(Self { root })
+    }
+}
+
+#[async_trait]
+impl StateBackend for LocalFileBackend {
+    async fn get_current_state(&self) -> Result<Namespace, StateError> {
+        let path = self.root.join("state.json");
+        if !path.exists() {
+            return Err(StateError::NotInitialized);
+        }
+        let content = tokio::fs::read_to_string(&path).await?;
+        Ok(serde_json::from_str(&content)?)
+    }
+
+    async fn record_migration(
+        &self,
+        migration: &Migration,
+        new_state: &Namespace,
+    ) -> Result<(), StateError> {
+        // Write migration file
+        let migration_path = self.root
+            .join("migrations")
+            .join(format!("{}.json", migration.id.short()));
+        tokio::fs::write(
+            &migration_path,
+            serde_json::to_string_pretty(migration)?,
+        ).await?;
+
+        // Update index
+        let index_path = self.root.join("migrations/index.json");
+        let mut index: MigrationIndex = serde_json::from_str(
+            &tokio::fs::read_to_string(&index_path).await?
+        )?;
+        index.migrations.push(migration.id.clone());
+        tokio::fs::write(&index_path, serde_json::to_string_pretty(&index)?).await?;
+
+        // Update current state
+        let state_path = self.root.join("state.json");
+        tokio::fs::write(&state_path, serde_json::to_string_pretty(new_state)?).await?;
+
+        // Update state hash
+        let hash = StateHash::from_namespace(new_state);
+        let hash_path = self.root.join("state.hash");
+        tokio::fs::write(&hash_path, hash.to_hex()).await?;
+
+        Ok(())
+    }
+
+    // ... other methods
+}
+
+/// Index of migrations in order of application.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MigrationIndex {
+    migrations: Vec<MigrationId>,
+}
+```
+
+#### Remote Backend (Future)
+
+A remote backend could store state in a database or cloud service:
+
+```rust
+/// PostgreSQL-based state backend.
+///
+/// Stores migration state in a `_tern_migrations` schema in the target database.
+pub struct PostgresBackend {
+    client: tokio_postgres::Client,
+}
+
+/// S3-based state backend for distributed teams.
+pub struct S3Backend {
+    bucket: String,
+    prefix: String,
+    client: aws_sdk_s3::Client,
+}
+```
+
+### Migration Generation Workflow
+
+With the state backend, the migration generation workflow changes:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    Migration Generation Workflow                     │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  1. Load "from" state from backend                                  │
+│     ┌─────────────┐                                                 │
+│     │   State     │ ──── get_current_state() ───▶ Namespace (from)  │
+│     │   Backend   │                                                 │
+│     └─────────────┘                                                 │
+│                                                                     │
+│  2. Load "to" state from live database                              │
+│     ┌─────────────┐                                                 │
+│     │   Live DB   │ ──── introspect schema ───▶ Namespace (to)      │
+│     └─────────────┘                                                 │
+│                                                                     │
+│  3. Generate diff                                                   │
+│     Namespace (from) ─┬─▶ diff_namespaces() ───▶ NamespaceDiff      │
+│     Namespace (to)  ──┘                                             │
+│                                                                     │
+│  4. Create migration                                                │
+│     NamespaceDiff ───▶ MigrationPlan ───▶ Migration                 │
+│                                                                     │
+│  5. Compile to executable                                           │
+│     Migration ───▶ Wasm Component ───▶ Standalone Executable        │
+│                                                                     │
+│  6. Record migration (after successful application)                 │
+│     ┌─────────────┐                                                 │
+│     │   State     │ ◀── record_migration() ───── Migration          │
+│     │   Backend   │                                                 │
+│     └─────────────┘                                                 │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### State Reconstruction
+
+The state backend supports reconstructing the schema state at any point in history:
+
+```rust
+impl LocalFileBackend {
+    /// Reconstruct schema state at a specific migration.
+    ///
+    /// This walks the migration history, starting from the nearest
+    /// checkpoint, and applies operations to rebuild the state.
+    pub async fn get_state_at(&self, target_id: &MigrationId) -> Result<Namespace, StateError> {
+        let history = self.get_history().await?;
+
+        // Find the target migration
+        let target_idx = history.iter()
+            .position(|m| &m.id == target_id)
+            .ok_or(StateError::MigrationNotFound(target_id.clone()))?;
+
+        // Find the nearest checkpoint before the target
+        let (start_state, start_idx) = self.find_nearest_checkpoint(&history, target_idx).await?;
+
+        // Apply operations from checkpoint to target
+        let mut state = start_state;
+        let mut oid_gen = OidGenerator::new(state.highest_oid() + 1);
+
+        for migration in &history[start_idx..=target_idx] {
+            for op in &migration.operations {
+                state.apply(op, &mut oid_gen)?;
+            }
+        }
+
+        Ok(state)
+    }
+
+    async fn find_nearest_checkpoint(
+        &self,
+        history: &[Migration],
+        before_idx: usize,
+    ) -> Result<(Namespace, usize), StateError> {
+        // Walk backwards to find a checkpoint
+        for (i, migration) in history[..=before_idx].iter().enumerate().rev() {
+            if let Some(ref checkpoint) = migration.checkpoint_state {
+                return Ok((checkpoint.clone(), i + 1));
+            }
+        }
+
+        // No checkpoint found, start from empty state
+        Ok((Namespace::empty("public"), 0))
+    }
+}
+```
+
+### Initialization and Baseline
+
+When adopting Tern on an existing database, the current schema becomes the initial state:
+
+```rust
+/// Initialize state backend from an existing database.
+pub async fn init_from_database(
+    backend: &impl StateBackend,
+    database_url: &str,
+    schema_name: &str,
+) -> Result<(), StateError> {
+    // Introspect current database schema
+    let (client, connection) = tokio_postgres::connect(database_url, NoTls).await?;
+    tokio::spawn(connection);
+
+    let catalog = PostgresCatalog::new(&client);
+    let namespace = load_namespace(&catalog, schema_name).await?;
+
+    // Initialize backend with current state as baseline
+    backend.initialize(&namespace).await?;
+
+    // Create a baseline migration record
+    let baseline = Migration {
+        id: MigrationId::from_content(&[], &StateHash::zero(), "baseline"),
+        description: "Baseline migration from existing database".to_string(),
+        created_at: Utc::now(),
+        operations: vec![],
+        parent_state_hash: StateHash::zero(),
+        resulting_state_hash: StateHash::from_namespace(&namespace),
+        breaking_changes: vec![],
+        checkpoint_state: Some(namespace),
+    };
+
+    backend.record_migration(&baseline, &namespace).await?;
+
+    Ok(())
+}
+```
+
+---
+
 ## WIT Interface Definition
 
 The WebAssembly Interface Types (WIT) definition specifies the contract between the host (runtime) and guest (migration component).
@@ -168,6 +613,12 @@ tern/
 │       │   ├── codegen.rs            # Wasm component generation
 │       │   ├── executable.rs         # Standalone executable builder
 │       │   └── error.rs
+│       ├── state/                    # NEW: State backend
+│       │   ├── mod.rs                # StateBackend trait, re-exports
+│       │   ├── types.rs              # MigrationId, StateHash, Migration
+│       │   ├── local.rs              # LocalFileBackend implementation
+│       │   ├── postgres.rs           # PostgresBackend (future)
+│       │   └── error.rs              # StateError types
 │       └── ...
 ├── crates/
 │   ├── tern-migration-wit/           # NEW: WIT definitions
@@ -187,7 +638,8 @@ tern/
 │       │   └── runtime.rs            # Wasmtime setup
 │       └── build.rs                  # Embeds component at compile time
 └── tests/
-    └── migration_compile_tests.rs
+    ├── migration_compile_tests.rs
+    └── state_backend_tests.rs        # NEW: State backend tests
 ```
 
 ---
@@ -1197,7 +1649,7 @@ pub fn compile_migration(
 
 **Goal**: Add CLI commands for compiling and inspecting migrations.
 
-#### Task 5.1: Add compile command
+#### Task 5.1: Add CLI commands
 
 Update `src/cli/mod.rs` to add new commands:
 
@@ -1208,32 +1660,94 @@ Update `src/cli/mod.rs` to add new commands:
 pub enum CliCommand {
     // ... existing commands ...
 
+    /// Initialize a new Tern project with state backend
+    #[command(name = "init")]
+    Init {
+        /// Initialize from an existing database (creates baseline)
+        #[arg(long, env = "DATABASE_URL")]
+        from: Option<String>,
+
+        /// Schema name to introspect
+        #[arg(long, default_value = "public")]
+        schema: String,
+
+        /// State backend type
+        #[arg(long, default_value = "local")]
+        backend: StateBackendType,
+    },
+
+    /// Show state backend status
+    #[command(name = "status")]
+    Status,
+
     /// Compile a migration to a standalone executable
     #[command(name = "compile")]
     Compile {
-        /// Source database URL (current state)
-        #[arg(long, env = "SOURCE_DATABASE_URL")]
-        from: String,
-
-        /// Target schema file or database URL
-        #[arg(long)]
-        to: String,
+        /// Database URL to compare against state backend
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: String,
 
         /// Output path for the executable
         #[arg(short, long)]
         output: PathBuf,
 
-        /// Migration identifier
-        #[arg(long)]
-        id: Option<String>,
-
         /// Migration description
         #[arg(long)]
-        description: Option<String>,
+        description: String,
 
         /// Target platform
         #[arg(long, default_value = "native")]
         target: String,
+
+        /// Record the migration to state backend after compilation
+        #[arg(long, default_value = "false")]
+        record: bool,
+
+        /// Show what would be generated without writing files
+        #[arg(long, default_value = "false")]
+        dry_run: bool,
+
+        /// Bypass state backend and compare two databases directly (legacy mode)
+        #[arg(long, default_value = "false")]
+        no_state: bool,
+
+        /// Source database URL (only with --no-state)
+        #[arg(long, requires = "no_state")]
+        from: Option<String>,
+    },
+
+    /// List migration history
+    #[command(name = "history")]
+    History {
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+
+        /// Number of migrations to show
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+
+    /// Show details of a specific migration
+    #[command(name = "show")]
+    Show {
+        /// Migration ID (short or full hash)
+        migration_id: String,
+
+        /// Output format (text, json, sql)
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+
+    /// Record a migration as applied
+    #[command(name = "record")]
+    Record {
+        /// Migration ID to record
+        migration_id: Option<String>,
+
+        /// Path to migration executable file
+        #[arg(long)]
+        migration_file: Option<PathBuf>,
     },
 
     /// Inspect a compiled migration (extract metadata/SQL)
@@ -1246,61 +1760,200 @@ pub enum CliCommand {
         #[arg(long, default_value = "text")]
         format: String,
     },
+
+    /// Verify state backend matches database
+    #[command(name = "verify")]
+    Verify {
+        /// Database URL to verify against
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: String,
+    },
+
+    /// Export current schema state
+    #[command(name = "export-state")]
+    ExportState {
+        /// Output file path
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Output format
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
+}
+
+/// State backend types.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum StateBackendType {
+    /// Local filesystem backend (.tern/ directory)
+    Local,
+    /// PostgreSQL backend (stores in _tern_migrations schema)
+    Postgres,
 }
 ```
 
 #### Task 5.2: Implement command handlers
 
 **Files to create:**
+- `src/cli/commands/init.rs`
 - `src/cli/commands/compile.rs`
+- `src/cli/commands/history.rs`
 - `src/cli/commands/inspect.rs`
+- `src/cli/commands/verify.rs`
+
+```rust
+// src/cli/commands/init.rs
+
+use crate::db::state::{LocalFileBackend, StateBackend, init_from_database};
+use crate::db::model::Namespace;
+use miette::Result;
+use std::path::Path;
+
+pub async fn run_init(
+    from: Option<&str>,
+    schema: &str,
+    backend_type: StateBackendType,
+) -> Result<()> {
+    let project_root = std::env::current_dir()?;
+
+    // Check if already initialized
+    if project_root.join(".tern").exists() {
+        return Err(miette::miette!(
+            "Tern is already initialized in this directory. \
+             Use --force to reinitialize."
+        ));
+    }
+
+    eprintln!("Initializing Tern state backend...");
+
+    match backend_type {
+        StateBackendType::Local => {
+            let backend = LocalFileBackend::init(&project_root)?;
+
+            if let Some(database_url) = from {
+                eprintln!("Creating baseline from database {}...", database_url);
+                init_from_database(&backend, database_url, schema).await?;
+                eprintln!("Baseline migration created.");
+            } else {
+                // Initialize with empty state
+                let empty = Namespace::empty(schema);
+                backend.initialize(&empty).await?;
+                eprintln!("Initialized with empty schema state.");
+            }
+        }
+        StateBackendType::Postgres => {
+            // Future: implement PostgreSQL backend initialization
+            return Err(miette::miette!("PostgreSQL backend not yet implemented"));
+        }
+    }
+
+    eprintln!("Tern initialized successfully.");
+    eprintln!("State directory: .tern/");
+
+    Ok(())
+}
+```
 
 ```rust
 // src/cli/commands/compile.rs
 
 use crate::db::compile::{compile_migration, CompileOptions, Target};
 use crate::db::query::{load_namespace, PostgresCatalog};
+use crate::db::state::{LocalFileBackend, StateBackend, Migration, MigrationId, StateHash};
+use crate::db::diff::diff_namespaces;
+use crate::db::migrate::MigrationPlan;
+use chrono::Utc;
 use miette::Result;
 use std::path::PathBuf;
 
 pub async fn run_compile(
-    from: &str,
-    to: &str,
+    database_url: &str,
     output: &PathBuf,
-    id: Option<String>,
-    description: Option<String>,
+    description: &str,
     target_str: &str,
+    record: bool,
+    dry_run: bool,
+    no_state: bool,
+    from: Option<&str>,
 ) -> Result<()> {
-    // Parse target
+    // Parse target platform
     let target = parse_target(target_str)?;
 
-    // Load source schema
-    eprintln!("Loading source schema from {}...", from);
-    let source = load_schema_from_url(from).await?;
+    // Load schemas based on mode
+    let (source, target_schema) = if no_state {
+        // Legacy mode: compare two databases directly
+        let from_url = from.ok_or_else(|| {
+            miette::miette!("--from is required when using --no-state")
+        })?;
+        eprintln!("Loading source schema from {}...", from_url);
+        let source = load_schema_from_url(from_url, "public").await?;
 
-    // Load target schema
-    eprintln!("Loading target schema from {}...", to);
-    let target_schema = load_schema(to).await?;
+        eprintln!("Loading target schema from {}...", database_url);
+        let target = load_schema_from_url(database_url, "public").await?;
 
-    // Generate ID if not provided
-    let id = id.unwrap_or_else(|| {
-        chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string()
-    });
+        (source, target)
+    } else {
+        // State backend mode: load from state, compare to database
+        let project_root = std::env::current_dir()?;
+        let backend = LocalFileBackend::open(&project_root)?;
 
-    // Generate description if not provided
-    let description = description.unwrap_or_else(|| {
-        format!("Migration {}", id)
-    });
+        eprintln!("Loading source schema from state backend...");
+        let source = backend.get_current_state().await?;
+        let source_hash = backend.get_current_state_hash().await?;
 
-    eprintln!("Compiling migration {}...", id);
+        eprintln!("Loading target schema from {}...", database_url);
+        let target = load_schema_from_url(database_url, source.name.as_ref()).await?;
 
+        (source, target)
+    };
+
+    // Generate diff
+    eprintln!("Computing schema diff...");
+    let diff = diff_namespaces(&source, &target_schema);
+
+    if diff.is_empty() {
+        eprintln!("No schema changes detected.");
+        return Ok(());
+    }
+
+    // Create migration plan
+    let plan = MigrationPlan::from_diff(&diff);
+    eprintln!("Generated {} operations", plan.len());
+
+    if dry_run {
+        // Just show what would be generated
+        eprintln!("\nDry run - would generate migration with:");
+        for (i, op) in plan.operations.iter().enumerate() {
+            eprintln!("  {}. {}", i + 1, op.description());
+        }
+        return Ok(());
+    }
+
+    // Create migration record
+    let parent_hash = if no_state {
+        StateHash::from_namespace(&source)
+    } else {
+        let backend = LocalFileBackend::open(&std::env::current_dir()?)?;
+        backend.get_current_state_hash().await?
+    };
+
+    let migration_id = MigrationId::from_content(
+        &plan.operations,
+        &parent_hash,
+        description,
+    );
+
+    eprintln!("Migration ID: {}", migration_id.short());
+
+    // Compile to executable
+    eprintln!("Compiling migration...");
     let result = compile_migration(
         &source,
         &target_schema,
         output,
         CompileOptions {
-            id: id.clone(),
-            description,
+            id: migration_id.short(),
+            description: description.to_string(),
             target,
         },
     )?;
@@ -1309,10 +1962,31 @@ pub async fn run_compile(
     eprintln!("  Statements: {}", result.statement_count);
 
     if !result.warnings.is_empty() {
-        eprintln!("  Warnings:");
+        eprintln!("  Breaking changes:");
         for warning in &result.warnings {
             eprintln!("    - {}", warning);
         }
+    }
+
+    // Optionally record the migration
+    if record && !no_state {
+        let backend = LocalFileBackend::open(&std::env::current_dir()?)?;
+
+        let migration = Migration {
+            id: migration_id,
+            description: description.to_string(),
+            created_at: Utc::now(),
+            operations: plan.operations,
+            parent_state_hash: parent_hash,
+            resulting_state_hash: StateHash::from_namespace(&target_schema),
+            breaking_changes: result.warnings.iter()
+                .map(|w| BreakingChange { description: w.clone() })
+                .collect(),
+            checkpoint_state: None,
+        };
+
+        backend.record_migration(&migration, &target_schema).await?;
+        eprintln!("Migration recorded to state backend.");
     }
 
     Ok(())
@@ -1330,7 +2004,7 @@ fn parse_target(s: &str) -> Result<Target> {
     }
 }
 
-async fn load_schema_from_url(url: &str) -> Result<Namespace> {
+async fn load_schema_from_url(url: &str, schema: &str) -> Result<Namespace> {
     let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls)
         .await
         .into_diagnostic()?;
@@ -1342,16 +2016,62 @@ async fn load_schema_from_url(url: &str) -> Result<Namespace> {
     });
 
     let catalog = PostgresCatalog::new(&client);
-    load_namespace(&catalog, "public").await.into_diagnostic()
+    load_namespace(&catalog, schema).await.into_diagnostic()
 }
+```
 
-async fn load_schema(path_or_url: &str) -> Result<Namespace> {
-    if path_or_url.starts_with("postgres://") || path_or_url.starts_with("postgresql://") {
-        load_schema_from_url(path_or_url).await
+```rust
+// src/cli/commands/verify.rs
+
+use crate::db::query::{load_namespace, PostgresCatalog};
+use crate::db::state::{LocalFileBackend, StateBackend, StateHash};
+use miette::Result;
+
+pub async fn run_verify(database_url: &str) -> Result<()> {
+    let project_root = std::env::current_dir()?;
+    let backend = LocalFileBackend::open(&project_root)?;
+
+    // Get state from backend
+    let state = backend.get_current_state().await?;
+    let state_hash = backend.get_current_state_hash().await?;
+
+    // Load schema from database
+    eprintln!("Connecting to database...");
+    let (client, connection) = tokio_postgres::connect(database_url, tokio_postgres::NoTls)
+        .await
+        .into_diagnostic()?;
+
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            tracing::error!("Connection error: {}", e);
+        }
+    });
+
+    let catalog = PostgresCatalog::new(&client);
+    let db_namespace = load_namespace(&catalog, state.name.as_ref())
+        .await
+        .into_diagnostic()?;
+
+    let db_hash = StateHash::from_namespace(&db_namespace);
+
+    // Compare
+    eprintln!("State Hash:    {}", state_hash.to_hex());
+    eprintln!("Database Hash: {}", db_hash.to_hex());
+
+    if state_hash == db_hash {
+        eprintln!("Status: ✓ In sync");
+        Ok(())
     } else {
-        // Load from SQL file
-        // TODO: Implement SQL file parsing
-        Err(miette::miette!("SQL file loading not yet implemented"))
+        eprintln!("Status: ✗ Out of sync");
+
+        // Show differences
+        let diff = diff_namespaces(&state, &db_namespace);
+        if !diff.is_empty() {
+            eprintln!("\nDifferences:");
+            // ... output diff summary
+        }
+
+        Err(miette::miette!("State backend and database are out of sync"))
     }
 }
 ```
@@ -1502,27 +2222,99 @@ fn test_compile_with_breaking_changes() {
 
 Once implemented, the CLI will support the following commands:
 
+### State Backend Initialization
+
 ```bash
-# Compile a migration from database diff
+# Initialize a new project with empty state
+tern init
+# Creates .tern/ directory with empty state
+
+# Initialize from an existing database (baseline)
+tern init --from postgres://localhost/mydb --schema public
+# Introspects database and creates baseline migration
+
+# Check state backend status
+tern status
+# Output:
+# State Backend: local (.tern/)
+# Current State Hash: a1b2c3d4
+# Migrations: 5 applied
+# Last Migration: 20240115_add_preferences (2024-01-15)
+```
+
+### Migration Generation (State Backend)
+
+```bash
+# Generate a migration by comparing state backend to live database
 tern compile \
-  --from postgres://localhost/mydb_dev \
-  --to postgres://localhost/mydb_staging \
+  --database-url postgres://localhost/mydb \
   --output ./migrations/20240115_schema_update \
-  --id "20240115_schema_update" \
   --description "Add user preferences table"
+# Uses state backend as "from", live database as "to"
+
+# Generate and immediately record (for development workflows)
+tern compile \
+  --database-url postgres://localhost/mydb \
+  --output ./migrations/20240115_schema_update \
+  --description "Add user preferences table" \
+  --record
+# Also updates state backend with the new migration
 
 # Compile for a specific platform
 tern compile \
-  --from postgres://localhost/mydb \
-  --to ./schema/target.sql \
+  --database-url postgres://localhost/mydb \
   --output ./dist/migration-linux \
-  --target x86_64-linux-musl
+  --target x86_64-linux-musl \
+  --description "Add user preferences table"
 
+# Show what would be generated without writing files
+tern compile \
+  --database-url postgres://localhost/mydb \
+  --dry-run
+# Outputs diff summary and SQL preview
+```
+
+### Migration History Management
+
+```bash
+# List migration history
+tern history
+# Output:
+# ID        Description                     Applied At
+# a1b2c3d4  Baseline migration              2024-01-01 10:00:00
+# e5f6g7h8  Add users table                 2024-01-05 14:30:00
+# i9j0k1l2  Add user preferences            2024-01-15 09:15:00
+
+# Show details of a specific migration
+tern show a1b2c3d4
+# Output:
+# Migration: a1b2c3d4
+# Description: Add users table
+# Created: 2024-01-05 14:30:00
+# Parent State: 00000000
+# Resulting State: b2c3d4e5
+# Operations: 3
+#   1. CreateTable public.users
+#   2. CreateIndex public.users_email_idx
+#   3. AddConstraint public.users_email_unique
+# Breaking Changes: none
+
+# Show SQL for a migration
+tern show a1b2c3d4 --format sql
+
+# Get state at a specific point in history
+tern state-at a1b2c3d4 --output schema.json
+```
+
+### Inspecting Compiled Migrations
+
+```bash
 # Inspect a compiled migration
 tern inspect ./migrations/20240115_schema_update
 # Output:
 # Migration: 20240115_schema_update
 # Description: Add user preferences table
+# ID: i9j0k1l2
 # Statements: 5
 # Warnings:
 #   - Column 'users.email' will be made NOT NULL
@@ -1532,11 +2324,19 @@ tern inspect ./migrations/20240115_schema_update --format sql
 # Output:
 # -- Migration: 20240115_schema_update
 # -- Description: Add user preferences table
+# -- ID: i9j0k1l2
 # BEGIN;
 # ALTER TABLE users ADD COLUMN preferences JSONB;
 # ...
 # COMMIT;
 
+# Output metadata as JSON
+tern inspect ./migrations/20240115_schema_update --format json
+```
+
+### Running Compiled Migrations
+
+```bash
 # Run the compiled migration
 ./migrations/20240115_schema_update --database-url postgres://localhost/mydb
 
@@ -1549,6 +2349,50 @@ tern inspect ./migrations/20240115_schema_update --format sql
 # Get migration info
 ./migrations/20240115_schema_update --describe
 ./migrations/20240115_schema_update --describe --format json
+
+# Record the migration as applied (updates state backend)
+tern record i9j0k1l2
+# or
+tern record --migration-file ./migrations/20240115_schema_update
+```
+
+### Advanced: Manual State Management
+
+```bash
+# Export current state to a file
+tern export-state --output schema.json
+
+# Import state from a file (careful: overwrites current state)
+tern import-state --input schema.json --force
+
+# Verify state matches database
+tern verify --database-url postgres://localhost/mydb
+# Output:
+# State Hash: a1b2c3d4
+# Database Hash: a1b2c3d4
+# Status: ✓ In sync
+
+# If out of sync:
+# Output:
+# State Hash: a1b2c3d4
+# Database Hash: x9y8z7w6
+# Status: ✗ Out of sync
+# Differences:
+#   - Table 'users': column 'email' type differs (text vs varchar(255))
+```
+
+### Legacy Mode (Direct Database Comparison)
+
+For cases where state backend is not desired, direct database comparison is still supported:
+
+```bash
+# Compare two databases directly (bypasses state backend)
+tern compile \
+  --from postgres://localhost/mydb_dev \
+  --to postgres://localhost/mydb_staging \
+  --output ./migrations/20240115_schema_update \
+  --description "Sync staging to dev" \
+  --no-state
 ```
 
 ---
@@ -1563,7 +2407,12 @@ tern inspect ./migrations/20240115_schema_update --format sql
 
 # New dependencies for compilation
 tempfile = "3"
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+
+# New dependencies for state backend
+sha2 = "0.10"              # Content-addressable hashing
+hex = "0.4"                # Hex encoding for hash display
+async-trait = "0.1"        # For async StateBackend trait
 ```
 
 ### tern-migration-guest Crate
@@ -1616,10 +2465,21 @@ futures = "0.3"
 | | 3.5 | Create build script for component embedding |
 | **4** | 4.1 | Implement `ExecutableBuilder` |
 | | 4.2 | Create high-level `compile_migration` API |
-| **5** | 5.1 | Add `compile` and `inspect` CLI commands |
-| | 5.2 | Implement command handlers |
-| **6** | 6.1 | Unit tests for code generation |
-| | 6.2 | Integration tests for full pipeline |
+| **5** | 5.1 | Add `db::state` module structure |
+| | 5.2 | Implement `MigrationId` and `StateHash` types with SHA-256 hashing |
+| | 5.3 | Implement `Migration` record type |
+| | 5.4 | Define `StateBackend` trait |
+| | 5.5 | Implement `LocalFileBackend` |
+| | 5.6 | Add state initialization from existing database |
+| | 5.7 | Add state reconstruction from history |
+| **6** | 6.1 | Add `init`, `status`, `history`, `verify` CLI commands |
+| | 6.2 | Update `compile` command to use state backend |
+| | 6.3 | Add `record` command for recording applied migrations |
+| | 6.4 | Implement command handlers |
+| **7** | 7.1 | Unit tests for code generation |
+| | 7.2 | Unit tests for state backend |
+| | 7.3 | Integration tests for full pipeline |
+| | 7.4 | Integration tests for state reconstruction |
 
 ---
 
@@ -1638,3 +2498,25 @@ This design intentionally leaves room for future enhancements:
 5. **Progress reporting**: Add progress callbacks for migrations with many statements
 
 6. **Remote execution**: Allow migrations to execute against remote databases through a secure tunnel
+
+### State Backend Extensions
+
+7. **PostgreSQL Backend**: Store migration state directly in the target database's `_tern_migrations` schema. This eliminates the need for local `.tern/` directory and works well for teams that don't want to check state files into version control.
+
+8. **S3/Cloud Storage Backend**: Store state in cloud object storage for distributed teams. Supports locking to prevent concurrent migrations.
+
+9. **State Branching**: Support multiple "branches" of migration state for feature branches that diverge from main. Includes branch merging with conflict detection.
+
+10. **Migration Squashing**: Combine multiple migrations into a single "squashed" migration with a checkpoint. Useful for reducing history size while preserving the ability to recreate old states.
+
+11. **Drift Detection**: Automatic detection of schema drift (manual changes made outside of Tern). Could trigger warnings or block migrations until resolved.
+
+12. **Team Notifications**: Webhooks or integrations to notify team members when migrations are recorded or applied.
+
+### Migration Record Extensions
+
+13. **Execution Tracking**: Store when and where each migration was actually executed (not just recorded). Track execution time, affected rows, etc.
+
+14. **Partial Migrations**: Support for migrations that failed partway through, with the ability to resume from the failure point.
+
+15. **Migration Dependencies**: Explicit dependencies between migrations beyond just linear history. Useful for parallel development workflows.
