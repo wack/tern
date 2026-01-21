@@ -1,0 +1,17 @@
+---
+source: tests/compile_integration_tests.rs
+expression: summary
+---
+migration_id: 76722ff51593fc63bcf353eae48bee34e31dc5f1ae8206631db1f601c77a0a6a
+description: Drop users table
+statement_count: 1
+has_breaking_changes: true
+has_destructive_changes: true
+source_hash: 8c1aa93d5f7859de
+target_hash: e493b8e476cf554f
+breaking_changes:
+  - description: "Table 'users' was dropped"
+    mitigation: Destructive
+sql_statements:
+  - description: Drop table public.users
+    sql: DROP TABLE public.users

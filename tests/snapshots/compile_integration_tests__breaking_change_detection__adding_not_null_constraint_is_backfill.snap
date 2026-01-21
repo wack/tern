@@ -1,0 +1,17 @@
+---
+source: tests/compile_integration_tests.rs
+expression: summary
+---
+migration_id: a4b2b87731b5f65eebb8f0fed6207a1114c108b4e02124c060d24cd04ecc9311
+description: Make name column not null
+statement_count: 1
+has_breaking_changes: true
+has_destructive_changes: false
+source_hash: 8c1aa93d5f7859de
+target_hash: 5a1905add413a2fc
+breaking_changes:
+  - description: "Column 'users.name' changed from nullable to NOT NULL"
+    mitigation: Backfill
+sql_statements:
+  - description: Alter column public.users.name
+    sql: ALTER TABLE public.users ALTER COLUMN name SET NOT NULL

@@ -1,0 +1,19 @@
+---
+source: tests/compile_integration_tests.rs
+expression: summary
+---
+migration_id: a9aa9b85d50d7e879fd02ec5c6625bd2771e95e1b0389258db6b447257de228a
+description: Create users with view
+statement_count: 3
+has_breaking_changes: false
+has_destructive_changes: false
+source_hash: e493b8e476cf554f
+target_hash: f3e960141480dc53
+breaking_changes: []
+sql_statements:
+  - description: Create sequence public.invoice_number_seq
+    sql: CREATE SEQUENCE public.invoice_number_seq AS bigint START WITH 1 INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 NO CYCLE
+  - description: Create table public.users
+    sql: "CREATE TABLE public.users (\n    id integer NOT NULL GENERATED ALWAYS AS IDENTITY,\n    email text NOT NULL,\n    active boolean DEFAULT true,\n    CONSTRAINT users_pkey PRIMARY KEY (id)\n)"
+  - description: Create view public.active_users
+    sql: CREATE VIEW public.active_users AS SELECT * FROM users WHERE active = true

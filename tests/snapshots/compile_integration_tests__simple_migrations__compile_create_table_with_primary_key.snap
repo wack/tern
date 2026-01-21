@@ -1,0 +1,15 @@
+---
+source: tests/compile_integration_tests.rs
+expression: summary
+---
+migration_id: 0f53b7dfe63dcb3280898d0339544228ceef9ecd96c106262a3ae7b4efa39707
+description: Create users table with PK
+statement_count: 1
+has_breaking_changes: false
+has_destructive_changes: false
+source_hash: e493b8e476cf554f
+target_hash: 7014c2a24de7821a
+breaking_changes: []
+sql_statements:
+  - description: Create table public.users
+    sql: "CREATE TABLE public.users (\n    id integer NOT NULL GENERATED ALWAYS AS IDENTITY,\n    email text NOT NULL,\n    CONSTRAINT users_pkey PRIMARY KEY (id)\n)"

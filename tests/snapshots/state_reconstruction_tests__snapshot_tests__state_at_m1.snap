@@ -1,0 +1,9 @@
+---
+source: tests/state_reconstruction_tests.rs
+expression: summary_m1
+---
+migration_count: 2
+reconstructed_table_count: 1
+reconstructed_table_names:
+  - users
+matches_expected: true

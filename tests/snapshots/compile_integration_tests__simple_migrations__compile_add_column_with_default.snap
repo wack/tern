@@ -1,0 +1,15 @@
+---
+source: tests/compile_integration_tests.rs
+expression: summary
+---
+migration_id: 47e399f95a7e866936d94eebf63423d088de648f2e929c42e2bc270566814f25
+description: Add status column with default
+statement_count: 1
+has_breaking_changes: false
+has_destructive_changes: false
+source_hash: 4936e64c85d34cc1
+target_hash: f0adf9dab70c0c57
+breaking_changes: []
+sql_statements:
+  - description: Add column public.users.status
+    sql: "ALTER TABLE public.users ADD COLUMNstatus text NOT NULL DEFAULT 'active'"

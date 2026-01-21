@@ -1,0 +1,6 @@
+---
+source: tests/compile_integration_tests.rs
+expression: sql
+---
+- "CREATE TABLE public.users (\n    id integer NOT NULL GENERATED ALWAYS AS IDENTITY,\n    email text NOT NULL,\n    CONSTRAINT users_pkey PRIMARY KEY (id),\n    CONSTRAINT users_email_key UNIQUE (email)\n)"
+- CREATE INDEX users_email_idx ON public.users (email)

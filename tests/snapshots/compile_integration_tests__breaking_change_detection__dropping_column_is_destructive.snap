@@ -1,0 +1,17 @@
+---
+source: tests/compile_integration_tests.rs
+expression: summary
+---
+migration_id: 3db6fc56bef1a61d0afdd7a4947deb50bb2adcf567fc0c0e3424df7964e172d5
+description: Drop email column
+statement_count: 1
+has_breaking_changes: true
+has_destructive_changes: true
+source_hash: 753cb56e3438d7fe
+target_hash: 8c1aa93d5f7859de
+breaking_changes:
+  - description: "Column 'users.email' was dropped"
+    mitigation: Destructive
+sql_statements:
+  - description: Drop column public.users.email
+    sql: ALTER TABLE public.users DROP COLUMN email

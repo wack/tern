@@ -1,0 +1,16 @@
+---
+source: tests/compile_integration_tests.rs
+expression: redacted
+---
+define_migration! {
+    id: "29aea131eb170a40d278fff3453c05ac45acf6a6d67484a8111175fe23b05499",
+    description: "Create users table with enum",
+    source_state_hash: "e493b8e476cf554f502d3e761ec0297bc40f392c5f602d752c82c3acee08c966",
+    target_state_hash: "e3004d538cd840b2c4f26287a3888e2ebf811d65a60356f3d035e9cc5e19b6f9",
+    compiled_at: "[TIMESTAMP]",
+    breaking_changes: [],
+    statements: [
+        ("Create enum type public.user_status", "CREATE TYPE public.user_status AS ENUM ('active', 'inactive', 'pending')"),
+        ("Create table public.users", "CREATE TABLE public.users (\n    id integer NOT NULL GENERATED ALWAYS AS IDENTITY,\n    email text NOT NULL,\n    status user_status DEFAULT 'active',\n    created_at timestamp with time zone NOT NULL DEFAULT now(),\n    CONSTRAINT users_pkey PRIMARY KEY (id),\n    CONSTRAINT users_email_key UNIQUE (email)\n)")
+    ]
+}

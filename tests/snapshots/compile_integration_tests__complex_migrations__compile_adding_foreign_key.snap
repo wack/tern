@@ -1,0 +1,17 @@
+---
+source: tests/compile_integration_tests.rs
+expression: summary
+---
+migration_id: 3bb33080efaf648bedf2dfb98508654e1f96043a786b62b35d4ba37d6c16bc17
+description: Add FK from posts to users
+statement_count: 1
+has_breaking_changes: true
+has_destructive_changes: false
+source_hash: 5e200c716c20c60d
+target_hash: 767583a3ba6edf4c
+breaking_changes:
+  - description: "Foreign key 'posts_user_id_fkey' added to table 'posts' (user_id) referencing 'public.users'"
+    mitigation: Ratchet
+sql_statements:
+  - description: Add constraint posts_user_id_fkey on public.posts
+    sql: ALTER TABLE public.posts ADD CONSTRAINT posts_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users (id)

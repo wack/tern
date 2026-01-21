@@ -1,0 +1,15 @@
+---
+source: tests/compile_integration_tests.rs
+expression: summary
+---
+migration_id: 14319820fd27608f2b9942b125d278c8543742226423fcb6ef303b2f030729b3
+description: Add email column
+statement_count: 1
+has_breaking_changes: false
+has_destructive_changes: false
+source_hash: 8c1aa93d5f7859de
+target_hash: 753cb56e3438d7fe
+breaking_changes: []
+sql_statements:
+  - description: Add column public.users.email
+    sql: ALTER TABLE public.users ADD COLUMNemail text
