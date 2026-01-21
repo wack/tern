@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "WebAssembly runtime for executing Tern migration components"
 license = "MIT"
+repository = "https://github.com/wack/tern"
 
 [[bin]]
 name = "tern-migration-runner"

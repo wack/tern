@@ -11,6 +11,7 @@ resolver = "3"
 name = "tern"
 version = "0.1.0"
 edition = "2024"
+repository = "https://github.com/wack/tern"
 
 [[bin]]
 name = "tern"
@@ -46,3 +47,8 @@ tempfile = "3.16"
 
 [dev-dependencies]
 insta = { version = "1.42", features = ["yaml"] }
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
