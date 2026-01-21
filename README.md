@@ -8,6 +8,22 @@
 
 Named after the Arctic tern—a bird that makes the longest migration of any species—Tern helps you navigate the journey from one database schema to another with confidence.
 
+## Table of Contents
+
+- [Key Features](#key-features)
+- [Quick Start](#quick-start)
+- [Installation](#installation)
+- [Commands](#commands)
+- [Concepts](#concepts)
+  - [State Backend](#state-backend)
+  - [Breaking Change Detection](#breaking-change-detection)
+  - [Migration Executables](#migration-executables)
+- [Architecture](#architecture)
+- [Contributing](#contributing)
+- [Supported Schema Objects](#supported-schema-objects)
+- [Roadmap](#roadmap)
+- [License](#license)
+
 ## Key Features
 
 - **Schema introspection** — Automatically captures your PostgreSQL schema structure
