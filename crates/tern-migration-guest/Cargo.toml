@@ -1,0 +1,26 @@
+[package]
+name = "tern-migration-guest"
+version = "0.1.0"
+edition = "2024"
+description = "Guest bindings for Tern migration WebAssembly components"
+license = "MIT"
+
+[dependencies]
+# WIT definitions from the sister crate
+tern-migration-wit = { path = "../tern-migration-wit" }
+
+# wit-bindgen generates Rust bindings from WIT files for guest (component) code.
+# The version should be compatible with the component model tooling being used.
+wit-bindgen = "0.41"
+
+[dev-dependencies]
+# No dev-dependencies needed - tests use standard assert_eq
+# Note: pretty_assertions conflicts with macro-generated code that uses glob imports
+
+[features]
+# Default features for typical usage
+default = []
+
+# Enable this feature when compiling for WebAssembly target
+# This enables the actual component model bindings
+wasm = []

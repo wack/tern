@@ -829,9 +829,9 @@ serde_json = "1"
 | | 1.2 | Implement `init_from_database()` | DONE |
 | | 1.3 | Implement `get_state_at()` for state reconstruction | DONE |
 | | 1.4 | Add `record_migration()` method | DONE |
-| **2** | 2.1 | Create `tern-migration-wit` crate | TODO |
-| | 2.2 | Create `tern-migration-guest` crate | TODO |
-| | 2.3 | Update workspace Cargo.toml | TODO |
+| **2** | 2.1 | Create `tern-migration-wit` crate | DONE |
+| | 2.2 | Create `tern-migration-guest` crate | DONE |
+| | 2.3 | Update workspace Cargo.toml | DONE |
 | **3** | 3.1 | Add `db::compile` module structure | TODO |
 | | 3.2 | Implement `MigrationCompiler` | TODO |
 | **4** | 4.1 | Create `tern-migration-runner` crate | TODO |

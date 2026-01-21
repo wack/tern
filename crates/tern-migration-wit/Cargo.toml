@@ -1,0 +1,11 @@
+[package]
+name = "tern-migration-wit"
+version = "0.1.0"
+edition = "2024"
+description = "WIT interface definitions for Tern migration components"
+license = "MIT"
+
+[dependencies]
+# This crate primarily holds WIT definitions and re-exports generated bindings
+# No runtime dependencies needed - WIT files are consumed at build time by
+# dependent crates using wit-bindgen

@@ -1,0 +1,188 @@
+// Tern Migration Component Interface
+//
+// This WIT (WebAssembly Interface Types) definition specifies the contract
+// between compiled migration components and the Tern runtime. Migrations
+// are compiled to WebAssembly components that implement this interface,
+// allowing them to be executed by any compatible Tern runtime.
+//
+// The component model enables:
+// - Self-contained migration executables
+// - Platform independence
+// - Sandboxed execution with explicit capabilities
+
+package tern:migration@0.1.0;
+
+/// Database access interface provided by the runtime.
+///
+/// This interface allows migration components to execute SQL statements
+/// against the target database. The runtime handles connection management,
+/// transaction control, and error handling.
+interface database {
+    /// Error returned when a database operation fails.
+    ///
+    /// Contains a human-readable error message describing what went wrong.
+    /// The message may include PostgreSQL error codes, constraint names,
+    /// or other diagnostic information.
+    record db-error {
+        /// Human-readable error message
+        message: string,
+        /// Optional PostgreSQL error code (e.g., "23505" for unique violation)
+        code: option<string>,
+        /// Optional constraint name if the error involves a constraint
+        constraint-name: option<string>,
+        /// Optional table name if the error involves a specific table
+        table-name: option<string>,
+    }
+
+    /// Execute a SQL statement and return the number of rows affected.
+    ///
+    /// This function executes a single SQL statement against the connected
+    /// database. DDL statements (CREATE, ALTER, DROP) typically return 0.
+    /// DML statements (INSERT, UPDATE, DELETE) return the count of affected rows.
+    ///
+    /// # Arguments
+    /// * `sql` - The SQL statement to execute
+    ///
+    /// # Returns
+    /// * `Ok(u64)` - Number of rows affected by the statement
+    /// * `Err(db-error)` - Details about why the statement failed
+    ///
+    /// # Notes
+    /// - Statements are executed within a transaction managed by the runtime
+    /// - The runtime may enforce statement timeouts
+    /// - Multiple statements separated by semicolons are NOT supported;
+    ///   call this function once per statement
+    execute: func(sql: string) -> result<u64, db-error>;
+
+    /// Execute a SQL query and return results as JSON.
+    ///
+    /// This function is primarily for verification queries during migration
+    /// execution (e.g., checking row counts, verifying data integrity).
+    /// Results are returned as a JSON array of objects.
+    ///
+    /// # Arguments
+    /// * `sql` - The SQL query to execute (should be a SELECT statement)
+    ///
+    /// # Returns
+    /// * `Ok(string)` - JSON array containing query results
+    /// * `Err(db-error)` - Details about why the query failed
+    query: func(sql: string) -> result<string, db-error>;
+}
+
+/// Logging interface provided by the runtime.
+///
+/// Allows migration components to emit log messages that are captured
+/// and displayed by the runtime. Use this for progress reporting and
+/// diagnostic output.
+interface log {
+    /// Log severity levels.
+    enum level {
+        /// Debug-level messages (typically hidden unless verbose mode)
+        debug,
+        /// Informational messages about migration progress
+        info,
+        /// Warnings about potential issues that don't prevent migration
+        warn,
+        /// Error messages for failures that may prevent completion
+        error,
+    }
+
+    /// Emit a log message at the specified level.
+    ///
+    /// # Arguments
+    /// * `level` - Severity level of the message
+    /// * `message` - The log message text
+    log: func(level: level, message: string);
+}
+
+/// The core migration interface that components must implement.
+///
+/// Every compiled migration component exports this interface, providing
+/// methods to inspect the migration metadata and execute the migration.
+interface migration {
+    /// Severity level for breaking change warnings.
+    enum warning-severity {
+        /// Informational notice about the change
+        info,
+        /// Warning that requires attention but may be safe
+        warning,
+        /// Critical change that could cause data loss
+        critical,
+    }
+
+    /// A warning about a potentially breaking change in the migration.
+    record breaking-change-warning {
+        /// Human-readable description of the breaking change
+        description: string,
+        /// Severity level of the warning
+        severity: warning-severity,
+        /// The SQL statement(s) that cause this warning
+        affected-sql: list<string>,
+        /// Suggested mitigation or verification steps
+        mitigation: option<string>,
+    }
+
+    /// Metadata describing the migration.
+    record metadata {
+        /// Unique identifier for this migration (content-addressable hash)
+        id: string,
+        /// Human-readable description of what this migration does
+        description: string,
+        /// List of warnings about breaking changes
+        warnings: list<breaking-change-warning>,
+        /// Total number of SQL statements in this migration
+        statement-count: u32,
+        /// Hash of the source schema state (before migration)
+        source-state-hash: string,
+        /// Hash of the target schema state (after migration)
+        target-state-hash: string,
+        /// Timestamp when this migration was compiled (RFC 3339 format)
+        compiled-at: string,
+    }
+
+    /// Individual SQL statement with metadata.
+    record statement {
+        /// The SQL statement text
+        sql: string,
+        /// Human-readable description of what this statement does
+        description: string,
+        /// Sequence number (1-indexed) within the migration
+        sequence: u32,
+    }
+
+    /// Get metadata about this migration without executing it.
+    ///
+    /// This allows inspection of migration details before running.
+    /// The runtime uses this for `--describe` and `--dry-run` modes.
+    describe: func() -> metadata;
+
+    /// Get all SQL statements that will be executed.
+    ///
+    /// Returns the ordered list of SQL statements with descriptions.
+    /// Useful for reviewing the exact SQL before execution.
+    get-statements: func() -> list<statement>;
+
+    /// Execute the migration.
+    ///
+    /// Runs all SQL statements in order. The runtime wraps this in a
+    /// transaction that will be committed on success or rolled back on failure.
+    ///
+    /// # Returns
+    /// * `Ok(())` - Migration completed successfully
+    /// * `Err(string)` - Error message describing what failed
+    run: func() -> result<_, string>;
+}
+
+/// The world definition for Tern migration components.
+///
+/// Components implementing this world have access to database and logging
+/// capabilities provided by the runtime, and must export the migration
+/// interface for the runtime to invoke.
+world tern-migration {
+    /// Import database access from the runtime
+    import database;
+    /// Import logging from the runtime
+    import log;
+    /// Export the migration interface for the runtime to call
+    export migration;
+}
