@@ -27,7 +27,7 @@ jobs:
           tool: git-cliff
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Generate initial changelog (with unreleased section)
         run: |
