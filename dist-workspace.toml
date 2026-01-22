@@ -15,3 +15,8 @@ targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-da
 install-path = "CARGO_HOME"
 # Whether to install an updater program
 install-updater = true
+# Only build and distribute the main tern binary
+# (tern-migration-runner is a test-only binary that shouldn't be distributed)
+bin = ["tern"]
+# Custom build setup to install wasm32-wasip2 target for embedded WASI components
+github-build-setup = "../build-setup.yml"
