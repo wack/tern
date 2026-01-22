@@ -4,7 +4,7 @@
 # 3. Updating version in Cargo.toml and Cargo.lock
 # 4. Committing changes and pushing to a version branch
 
-name: Jump Tag
+name: Bump Tag
 
 on:
   workflow_dispatch:
@@ -141,6 +141,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Create and checkout version branch
+        run: |
+          NEW_TAG="${{ steps.new-version.outputs.tag }}"
+          git checkout -b "$NEW_TAG"
+          echo "Created and checked out branch: $NEW_TAG"
+
       - name: Commit changes
         run: |
           NEW_VERSION="${{ steps.new-version.outputs.version }}"
@@ -153,12 +159,6 @@ jobs:
           - Generate changelog for $NEW_TAG"
 
           echo "Committed release changes"
-
-      - name: Create and checkout version branch
-        run: |
-          NEW_TAG="${{ steps.new-version.outputs.tag }}"
-          git checkout -b "$NEW_TAG"
-          echo "Created and checked out branch: $NEW_TAG"
 
       - name: Push branch to remote
         run: |
