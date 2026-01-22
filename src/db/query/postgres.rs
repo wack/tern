@@ -76,8 +76,9 @@ impl Catalog for PostgresCatalog<'_> {
         Ok(rows
             .iter()
             .map(|r| {
-                let generated_kind: Option<String> = r.get("generated_kind");
-                let identity_kind: Option<String> = r.get("identity_kind");
+                // PostgreSQL `char` type (single byte) maps to i8 in Rust
+                let generated_kind_i8: Option<i8> = r.get("generated_kind");
+                let identity_kind_i8: Option<i8> = r.get("identity_kind");
 
                 ColumnRow {
                     position: r.get("position"),
@@ -88,8 +89,20 @@ impl Catalog for PostgresCatalog<'_> {
                     is_array: r.get("is_array"),
                     is_nullable: r.get("is_nullable"),
                     default_expr: r.get("default_expr"),
-                    generated_kind: generated_kind.and_then(|s| s.chars().next()),
-                    identity_kind: identity_kind.and_then(|s| s.chars().next()),
+                    generated_kind: generated_kind_i8.and_then(|i| {
+                        if i == 0 {
+                            None // Empty char (NULL byte) means not generated
+                        } else {
+                            Some(i as u8 as char)
+                        }
+                    }),
+                    identity_kind: identity_kind_i8.and_then(|i| {
+                        if i == 0 {
+                            None // Empty char (NULL byte) means no identity
+                        } else {
+                            Some(i as u8 as char)
+                        }
+                    }),
                     collation_schema: r.get("collation_schema"),
                     collation_name: r.get("collation_name"),
                     comment: r.get("comment"),

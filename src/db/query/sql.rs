@@ -47,7 +47,6 @@ SELECT
     NOT a.attnotnull AS is_nullable,
     pg_get_expr(d.adbin, d.adrelid) AS default_expr,
     a.attgenerated AS generated_kind,
-    pg_get_expr(d.adbin, d.adrelid) AS generated_expr,
     a.attidentity AS identity_kind,
     COALESCE(cn.nspname, 'pg_catalog') AS collation_schema,
     COALESCE(co.collname, 'default') AS collation_name,

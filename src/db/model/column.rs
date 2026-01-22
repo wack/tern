@@ -40,14 +40,15 @@ pub struct GeneratedColumn {
 
 /// Storage type for generated columns.
 ///
-/// PostgreSQL currently only supports STORED generated columns,
-/// but VIRTUAL may be added in the future.
+/// PostgreSQL supports both STORED and VIRTUAL generated columns (VIRTUAL added in PostgreSQL 18).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum GeneratedStorage {
     /// The generated value is stored on disk (`'s'`).
     #[default]
     Stored,
+    /// The generated value is computed on-the-fly when read (`'v'`, PostgreSQL 18+).
+    Virtual,
 }
 
 /// Error returned when parsing an invalid generated storage character.
@@ -55,9 +56,15 @@ pub enum GeneratedStorage {
 #[error("invalid generated storage type: '{0}'")]
 pub struct InvalidGeneratedStorage(pub char);
 
-crate::impl_char_enum!(GeneratedStorage, InvalidGeneratedStorage, [Stored => 's',]);
+crate::impl_char_enum!(GeneratedStorage, InvalidGeneratedStorage, [
+    Stored => 's',
+    Virtual => 'v',
+]);
 
-crate::impl_sql_enum!(GeneratedStorage, [Stored => "STORED",]);
+crate::impl_sql_enum!(GeneratedStorage, [
+    Stored => "STORED",
+    Virtual => "VIRTUAL",
+]);
 
 /// Identity column kind (`GENERATED { ALWAYS | BY DEFAULT } AS IDENTITY`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -92,7 +99,10 @@ mod tests {
 
     #[test]
     fn generated_storage_roundtrip() {
-        crate::assert_enum_char_roundtrip!(GeneratedStorage, [GeneratedStorage::Stored]);
+        crate::assert_enum_char_roundtrip!(
+            GeneratedStorage,
+            [GeneratedStorage::Stored, GeneratedStorage::Virtual,]
+        );
     }
 
     #[test]
