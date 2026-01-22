@@ -169,10 +169,22 @@ impl PgLiteRuntime {
         };
 
         // Install and initialize PGLite
-        let paths = pglite_oxide::install_and_init_in(&install_path).map_err(|e| {
-            PgLiteError::RuntimeInit {
-                message: format!("failed to install PGLite: {}", e),
-            }
+        let install_path_clone = install_path.clone();
+        // IMPORTANT: Must use spawn_blocking here because pglite_oxide::install_and_init_in()
+        // internally uses wasmtime to compile WebAssembly, and wasmtime attempts to create
+        // its own async runtime. Since we're already inside a tokio runtime (from #[tokio::main]),
+        // this would cause a "Cannot start a runtime from within a runtime" panic.
+        // spawn_blocking runs this on a dedicated thread pool for blocking operations,
+        // preventing the nested runtime error.
+        let paths = tokio::task::spawn_blocking(move || {
+            pglite_oxide::install_and_init_in(&install_path_clone)
+        })
+        .await
+        .map_err(|e| PgLiteError::RuntimeInit {
+            message: format!("failed to spawn blocking task: {}", e),
+        })?
+        .map_err(|e| PgLiteError::RuntimeInit {
+            message: format!("failed to install PGLite: {}", e),
         })?;
 
         self.paths = Some(paths);
