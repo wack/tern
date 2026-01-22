@@ -1,7 +1,7 @@
 # Workflow to prepare a new release by:
-# 1. Generating changelog with git-cliff
-# 2. Determining version bump type from changelog
-# 3. Updating version in Cargo.toml and Cargo.lock
+# 1. Using git-cliff to calculate the next semantic version
+# 2. Updating version in Cargo.toml and Cargo.lock
+# 3. Generating changelog with git-cliff
 # 4. Committing changes and pushing to a version branch
 
 name: Bump Tag
@@ -29,89 +29,28 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Generate initial changelog (with unreleased section)
+      - name: Calculate next version
+        id: next-version
         run: |
-          git cliff --unreleased --output CHANGELOG_UNRELEASED.md
-          echo "=== Unreleased Changelog ==="
-          cat CHANGELOG_UNRELEASED.md
+          # Use git-cliff to automatically determine the next version
+          # based on conventional commits and bump rules in cliff.toml
+          NEW_VERSION=$(git cliff --bumped-version)
 
-      - name: Determine version bump type
-        id: bump-type
-        run: |
-          CHANGELOG=$(cat CHANGELOG_UNRELEASED.md)
-
-          # Check for breaking changes (must be major bump)
-          if echo "$CHANGELOG" | grep -qiE '### Breaking Changes|BREAKING'; then
-            echo "bump=major" >> "$GITHUB_OUTPUT"
-            echo "Detected: BREAKING changes -> major version bump"
-          # Check if ONLY bug fixes and/or security (patch bump)
-          # We check if there are any changes, and if all changes are bug fixes or security
-          elif echo "$CHANGELOG" | grep -qE '### (Bug Fixes|Security)'; then
-            # Check if there are any other types of changes
-            if echo "$CHANGELOG" | grep -qE '### (Features|Documentation|Refactoring|Performance|Testing|Build|Miscellaneous|Changes)'; then
-              echo "bump=minor" >> "$GITHUB_OUTPUT"
-              echo "Detected: Mixed changes including features -> minor version bump"
-            else
-              echo "bump=patch" >> "$GITHUB_OUTPUT"
-              echo "Detected: Only BUG/SECURITY changes -> patch version bump"
-            fi
-          # Check if there are any changes at all
-          elif echo "$CHANGELOG" | grep -qE '### '; then
-            echo "bump=minor" >> "$GITHUB_OUTPUT"
-            echo "Detected: Other changes -> minor version bump"
-          else
-            echo "bump=none" >> "$GITHUB_OUTPUT"
-            echo "No changes detected"
+          if [ -z "$NEW_VERSION" ]; then
+            echo "No version bump needed - no relevant commits since last tag"
+            exit 1
           fi
 
-          # Clean up temporary file
-          rm -f CHANGELOG_UNRELEASED.md
+          # Remove 'v' prefix if present for the version number
+          VERSION_NUMBER="${NEW_VERSION#v}"
 
-      - name: Check for changes
-        if: steps.bump-type.outputs.bump == 'none'
-        run: |
-          echo "No changes detected since last release. Exiting."
-          exit 1
-
-      - name: Read current version from Cargo.toml
-        id: current-version
-        run: |
-          # Extract version from the main package in Cargo.toml
-          VERSION=$(grep -m1 '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Current version: $VERSION"
-
-      - name: Calculate new version
-        id: new-version
-        run: |
-          CURRENT="${{ steps.current-version.outputs.version }}"
-          BUMP="${{ steps.bump-type.outputs.bump }}"
-
-          # Parse major.minor.patch
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-
-          case "$BUMP" in
-            major)
-              NEW_MAJOR=$((MAJOR + 1))
-              NEW_VERSION="${NEW_MAJOR}.0.0"
-              ;;
-            minor)
-              NEW_MINOR=$((MINOR + 1))
-              NEW_VERSION="${MAJOR}.${NEW_MINOR}.0"
-              ;;
-            patch)
-              NEW_PATCH=$((PATCH + 1))
-              NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
-              ;;
-          esac
-
-          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=v$NEW_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Calculated new version: $NEW_VERSION (bump type: $BUMP)"
+          echo "version=$VERSION_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "Calculated next version: $VERSION_NUMBER"
 
       - name: Update Cargo.toml version
         run: |
-          NEW_VERSION="${{ steps.new-version.outputs.version }}"
+          NEW_VERSION="${{ steps.next-version.outputs.version }}"
 
           # Update version in the main package section of Cargo.toml
           # This matches the first 'version = "..."' line after [package]
@@ -126,9 +65,9 @@ jobs:
           cargo update --workspace
           echo "Updated Cargo.lock"
 
-      - name: Generate final changelog
+      - name: Generate changelog
         run: |
-          NEW_TAG="${{ steps.new-version.outputs.tag }}"
+          NEW_TAG="${{ steps.next-version.outputs.tag }}"
 
           # Generate full changelog with the new version tag
           git cliff --tag "$NEW_TAG" --output CHANGELOG.md
@@ -143,14 +82,14 @@ jobs:
 
       - name: Create and checkout version branch
         run: |
-          NEW_TAG="${{ steps.new-version.outputs.tag }}"
+          NEW_TAG="${{ steps.next-version.outputs.tag }}"
           git checkout -b "$NEW_TAG"
           echo "Created and checked out branch: $NEW_TAG"
 
       - name: Commit changes
         run: |
-          NEW_VERSION="${{ steps.new-version.outputs.version }}"
-          NEW_TAG="${{ steps.new-version.outputs.tag }}"
+          NEW_VERSION="${{ steps.next-version.outputs.version }}"
+          NEW_TAG="${{ steps.next-version.outputs.tag }}"
 
           git add CHANGELOG.md Cargo.toml Cargo.lock
           git commit -m "Release $NEW_TAG
@@ -162,7 +101,7 @@ jobs:
 
       - name: Push branch to remote
         run: |
-          NEW_TAG="${{ steps.new-version.outputs.tag }}"
+          NEW_TAG="${{ steps.next-version.outputs.tag }}"
           git push -u origin "$NEW_TAG"
           echo "Pushed branch $NEW_TAG to remote"
 
@@ -170,9 +109,7 @@ jobs:
         run: |
           echo "## Release Preparation Complete" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Previous Version:** ${{ steps.current-version.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **New Version:** ${{ steps.new-version.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Bump Type:** ${{ steps.bump-type.outputs.bump }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Branch:** ${{ steps.new-version.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **New Version:** ${{ steps.next-version.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Branch:** ${{ steps.next-version.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "The version branch has been pushed. Create a PR or push a tag to trigger the release workflow." >> "$GITHUB_STEP_SUMMARY"
