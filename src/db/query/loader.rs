@@ -218,14 +218,15 @@ async fn load_columns<C: Catalog>(catalog: &C, table_oid: Oid) -> Result<Vec<Col
 /// Converts a column row to a domain Column.
 fn row_to_column(row: ColumnRow) -> Result<Column, QueryError> {
     // Parse generated column info
-    let generated = if row.generated_kind == Some('s') {
-        row.default_expr.as_ref().map(|expr| GeneratedColumn {
-            expression: SqlExpr::new(expr.clone()),
-            storage: GeneratedStorage::Stored,
-        })
-    } else {
-        None
-    };
+    let generated = row
+        .generated_kind
+        .and_then(|kind| GeneratedStorage::try_from(kind).ok())
+        .and_then(|storage| {
+            row.default_expr.as_ref().map(|expr| GeneratedColumn {
+                expression: SqlExpr::new(expr.clone()),
+                storage,
+            })
+        });
 
     // Parse identity column info
     let identity = row
