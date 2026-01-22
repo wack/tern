@@ -1,15 +1,15 @@
 [workspace]
 members = [
-    ".",
-    "crates/tern-migration-wit",
-    "crates/tern-migration-guest",
-    "crates/tern-migration-runner",
+  ".",
+  "crates/tern-migration-wit",
+  "crates/tern-migration-guest",
+  "crates/tern-migration-runner",
 ]
 resolver = "3"
 
 [package]
 name = "tern"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 repository = "https://github.com/wack/tern"
 
