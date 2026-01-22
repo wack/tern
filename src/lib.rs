@@ -1,5 +1,7 @@
 pub mod cli;
 pub mod db;
+#[cfg(feature = "pglite")]
+pub mod mcp;
 
 // =============================================================================
 // Macros for Reducing Code Duplication

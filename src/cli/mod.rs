@@ -297,6 +297,43 @@ pub enum CliCommand {
     /// foundation of the model-first migration workflow.
     #[command(subcommand)]
     Schema(SchemaAction),
+
+    /// MCP server commands
+    ///
+    /// Commands for running the MCP (Model Context Protocol) server,
+    /// which enables AI assistants to create database migrations
+    /// through structured tool calls.
+    #[cfg(feature = "pglite")]
+    #[command(subcommand)]
+    Mcp(McpAction),
+}
+
+/// MCP (Model Context Protocol) server subcommands.
+///
+/// These commands control the MCP server, which enables AI assistants
+/// and other MCP clients to create database migrations programmatically.
+#[cfg(feature = "pglite")]
+#[derive(Debug, Subcommand, Clone)]
+pub enum McpAction {
+    /// Start the MCP server
+    ///
+    /// Starts the MCP server on stdio (standard input/output) for
+    /// communication with MCP clients like Claude.
+    Serve {
+        /// Working directory containing .tern/ (default: current directory)
+        #[arg(long)]
+        working_dir: Option<PathBuf>,
+    },
+}
+
+#[cfg(feature = "pglite")]
+impl McpAction {
+    /// Dispatch MCP subcommands.
+    pub async fn dispatch(self) -> miette::Result<()> {
+        match self {
+            McpAction::Serve { working_dir } => crate::mcp::run_mcp_server(working_dir).await,
+        }
+    }
 }
 
 /// Schema-related subcommands.
@@ -480,6 +517,8 @@ impl CliCommand {
                 commands::run_verify_chain(format, path.as_deref()).await
             }
             CliCommand::Schema(action) => action.dispatch().await,
+            #[cfg(feature = "pglite")]
+            CliCommand::Mcp(action) => action.dispatch().await,
         }
     }
 }
