@@ -1,45 +1,62 @@
 // Tern Migration Runner World Definition
 //
-// The runner is a WASI CLI application that imports the migration interface
+// The runner is a WASI CLI application that imports migration data directly
 // and executes migrations. It is compiled to wasm32-wasip2 and composed with
-// a migration component to create a standalone migration executable.
+// a data component to create a standalone migration executable.
 //
-// Architecture:
+// Simplified Architecture (2 components):
 //   ┌─────────────────────────────────────────────────────────────────────┐
 //   │                     Complete Composed Component                      │
+//   │                                                                      │
 //   │ ┌─────────────────────────────────────────────────────────────────┐ │
 //   │ │                      Runner Component                           │ │
+//   │ │  (pre-compiled, embedded in Tern binary)                        │ │
+//   │ │                                                                 │ │
 //   │ │  Imports:                                                       │ │
-//   │ │    - wasi:cli/* (args, stdin, stdout, stderr)                   │ │
-//   │ │    - tern:migration/migration (describe, run, get-statements)   │ │
+//   │ │    - wasi:cli/* (args, stdout, stderr)                          │ │
+//   │ │    - tern:migration-data/migration-data (SQL statements)        │ │
+//   │ │                                                                 │ │
 //   │ │  Exports:                                                       │ │
 //   │ │    - wasi:cli/run (main entry point)                            │ │
+//   │ │                                                                 │ │
+//   │ │  Internal:                                                      │ │
+//   │ │    - Implements describe/run logic directly                     │ │
+//   │ │    - CLI argument parsing                                       │ │
+//   │ │    - Output formatting (text/JSON)                              │ │
 //   │ └──────────────────────────────┬──────────────────────────────────┘ │
 //   │                                │                                    │
-//   │                    imports migration                                │
+//   │                    imports migration-data                           │
 //   │                                │                                    │
 //   │ ┌──────────────────────────────▼──────────────────────────────────┐ │
-//   │ │                    Migration Component                          │ │
-//   │ │  (composed from guest + data)                                   │ │
+//   │ │                    Data Component                               │ │
+//   │ │  (generated at migration compile time)                          │ │
+//   │ │                                                                 │ │
 //   │ │  Exports:                                                       │ │
-//   │ │    - tern:migration/migration                                   │ │
+//   │ │    - tern:migration-data/migration-data                         │ │
+//   │ │      (get-id, get-statement, get-breaking-changes, etc.)        │ │
 //   │ └─────────────────────────────────────────────────────────────────┘ │
 //   └─────────────────────────────────────────────────────────────────────┘
+//
+// Benefits of this simplified design:
+//   - Only 2 components instead of 3 (no guest component)
+//   - Single composition step (runner + data)
+//   - Runner handles all migration logic directly
+//   - Simpler mental model and faster composition
 
 package tern:runner@0.1.0;
 
 /// World definition for the migration runner component.
 ///
 /// The runner is compiled as a WASI CLI application that:
-/// 1. Parses CLI arguments (--database-url, --dry-run, --describe, etc.)
-/// 2. Calls the imported migration interface to describe or execute
-/// 3. Outputs results to stdout/stderr
+/// 1. Parses CLI arguments (--describe, --show-sql, --execute, etc.)
+/// 2. Reads migration data from the imported migration-data interface
+/// 3. Implements describe/run logic internally
+/// 4. Outputs results to stdout/stderr
 ///
-/// Note: Database connectivity is handled specially. The runner provides
-/// the database and log interfaces to the migration component through
-/// composition. In the WASI context, database operations are routed
-/// through the runner's implementation using WASI sockets or a custom
-/// host interface.
+/// Database connectivity note: In this standalone executable model,
+/// database operations are handled by the AOT-compiled native code
+/// that wraps this component. The runner outputs SQL statements for
+/// execution by the host environment.
 world tern-runner {
     // WASI imports for CLI functionality
     // These are satisfied by the WASI runtime (e.g., wasmtime)
@@ -50,9 +67,9 @@ world tern-runner {
     import wasi:io/streams@0.2.0;
     import wasi:clocks/wall-clock@0.2.0;
 
-    // Import the migration interface
-    // This is satisfied by the composed migration component
-    import tern:migration/migration@0.1.0;
+    // Import migration data directly from the data component
+    // This is satisfied when runner + data are composed
+    import tern:migration-data/migration-data@0.1.0;
 
     // Export WASI CLI entry point
     // This makes the component a runnable CLI application
@@ -64,8 +81,8 @@ world tern-runner {
 /// This world is useful for unit testing the runner logic without
 /// requiring a full WASI implementation.
 world tern-runner-minimal {
-    // Only import migration interface
-    import tern:migration/migration@0.1.0;
+    // Only import migration data
+    import tern:migration-data/migration-data@0.1.0;
 
     // Simple entry point for testing
     export run: func() -> result<_, string>;

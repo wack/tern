@@ -1,31 +1,41 @@
 //! Tern Migration Runner - WASI CLI Component
 //!
 //! This crate implements the migration runner as a WASI CLI application.
-//! It is compiled to `wasm32-wasip2` and composed with a migration component
+//! It is compiled to `wasm32-wasip2` and composed with a data component
 //! to create standalone migration executables.
 //!
-//! # Architecture
+//! # Simplified Architecture (2 components)
 //!
-//! The runner component:
-//! - **Imports** the `migration` interface (satisfied by composed migration component)
-//! - **Exports** `wasi:cli/run` (the CLI entry point)
+//! The runner directly imports migration data, eliminating the need for
+//! a separate guest component:
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────┐
 //! │                    Runner Component                         │
+//! │  (pre-compiled, embedded in Tern binary)                    │
 //! │                                                             │
 //! │  Imports:                                                   │
 //! │    - wasi:cli/* (environment, stdout, stderr)               │
-//! │    - tern:migration/migration (describe, run, get-statements)│
+//! │    - tern:migration-data/migration-data (SQL statements)    │
 //! │                                                             │
 //! │  Exports:                                                   │
 //! │    - wasi:cli/run (main entry point)                        │
 //! │                                                             │
 //! │  Flow:                                                      │
 //! │    1. Parse CLI arguments                                   │
-//! │    2. Call migration.describe() / migration.run()           │
-//! │    3. Output results to stdout/stderr                       │
+//! │    2. Read migration data from imported interface           │
+//! │    3. Build metadata / get statements / output SQL          │
 //! │                                                             │
+//! └─────────────────────────────────────────────────────────────┘
+//!                           │
+//!                imports migration-data
+//!                           │
+//! ┌─────────────────────────▼───────────────────────────────────┐
+//! │                    Data Component                           │
+//! │  (generated at migration compile time)                      │
+//! │                                                             │
+//! │  Exports:                                                   │
+//! │    - tern:migration-data/migration-data                     │
 //! └─────────────────────────────────────────────────────────────┘
 //! ```
 //!
@@ -40,7 +50,7 @@
 //! # Show SQL statements
 //! ./migration --show-sql
 //!
-//! # Execute migration (placeholder until database connectivity is implemented)
+//! # Output SQL for execution (prints all statements)
 //! ./migration --execute
 //!
 //! # JSON output
@@ -62,18 +72,21 @@ mod wasm {
 
     // Generate bindings for the runner world
     wit_bindgen::generate!({
-        path: "../tern-migration-wit/wit",
+        path: "../tern-migration-wit/wit/tern-runner",
         world: "tern-runner",
-        // Export the WASI CLI run function
-        exports: {
-            "wasi:cli/run@0.2.0": RunnerImpl,
-        },
+        generate_all,
     });
+
+    // Alias for the exported run interface
+    use exports::wasi::cli::run::Guest;
+
+    // Alias for migration data interface
+    use tern::migration_data::migration_data as data;
 
     /// The runner implementation.
     pub struct RunnerImpl;
 
-    impl exports::wasi::cli::run::Guest for RunnerImpl {
+    impl Guest for RunnerImpl {
         /// Main entry point for the WASI CLI.
         fn run() -> Result<(), ()> {
             // Get CLI arguments from WASI environment
@@ -107,56 +120,57 @@ mod wasm {
                 return Ok(());
             }
 
-            // Get migration interface
-            let metadata = tern::migration::migration::describe();
+            // Build metadata from migration data
+            let metadata = build_metadata();
 
             if cli_args.describe {
-                let converted = convert_metadata(&metadata);
                 let output = match cli_args.format {
-                    OutputFormat::Text => format_metadata_text(&converted),
-                    OutputFormat::Json => format_metadata_json(&converted),
+                    OutputFormat::Text => format_metadata_text(&metadata),
+                    OutputFormat::Json => format_metadata_json(&metadata),
                 };
                 print_stdout(&output);
                 return Ok(());
             }
 
             if cli_args.show_sql {
-                let statements = tern::migration::migration::get_statements();
-                let converted: Vec<Statement> = statements
-                    .into_iter()
-                    .map(|s| Statement {
-                        sql: s.sql,
-                        description: s.description,
-                        sequence: s.sequence,
-                    })
-                    .collect();
+                let statements = get_all_statements();
                 let output = match cli_args.format {
-                    OutputFormat::Text => format_statements_text(&converted),
-                    OutputFormat::Json => format_statements_json(&converted),
+                    OutputFormat::Text => format_statements_text(&statements),
+                    OutputFormat::Json => format_statements_json(&statements),
                 };
                 print_stdout(&output);
                 return Ok(());
             }
 
             if cli_args.execute {
-                // Execute the migration
-                print_stdout("Executing migration...\n");
-                match tern::migration::migration::run() {
-                    Ok(()) => {
-                        print_stdout("Migration completed successfully.\n");
-                        Ok(())
-                    }
-                    Err(e) => {
-                        print_stderr(&format!("Migration failed: {}\n", e));
-                        Err(())
-                    }
+                // Output SQL statements for execution
+                // In the standalone executable model, the host environment
+                // captures stdout and executes the SQL statements
+                print_stdout("-- Migration: ");
+                print_stdout(&metadata.id);
+                print_stdout("\n-- ");
+                print_stdout(&metadata.description);
+                print_stdout("\n\n");
+
+                let statements = get_all_statements();
+                for stmt in &statements {
+                    print_stdout(&format!(
+                        "-- [{}/{}] {}\n",
+                        stmt.sequence,
+                        statements.len(),
+                        stmt.description
+                    ));
+                    print_stdout(&stmt.sql);
+                    print_stdout(";\n\n");
                 }
+
+                print_stdout("-- Migration complete\n");
+                Ok(())
             } else {
                 // Default: describe
-                let converted = convert_metadata(&metadata);
                 let output = match cli_args.format {
-                    OutputFormat::Text => format_metadata_text(&converted),
-                    OutputFormat::Json => format_metadata_json(&converted),
+                    OutputFormat::Text => format_metadata_text(&metadata),
+                    OutputFormat::Json => format_metadata_json(&metadata),
                 };
                 print_stdout(&output);
                 Ok(())
@@ -164,69 +178,65 @@ mod wasm {
         }
     }
 
-    /// Convert WIT metadata to our internal type.
-    fn convert_metadata(m: &tern::migration::migration::Metadata) -> MigrationMetadata {
+    /// Build metadata from the migration-data interface.
+    fn build_metadata() -> MigrationMetadata {
+        let breaking_changes = data::get_breaking_changes()
+            .into_iter()
+            .map(|bc| BreakingChange {
+                description: bc.description,
+                mitigation: convert_mitigation(&bc.mitigation),
+                affected_sql: bc.affected_sql,
+            })
+            .collect();
+
         MigrationMetadata {
-            id: m.id.clone(),
-            description: m.description.clone(),
-            breaking_changes: m
-                .breaking_changes
-                .iter()
-                .map(|bc| BreakingChange {
-                    description: bc.description.clone(),
-                    mitigation: convert_mitigation(&bc.mitigation),
-                    affected_sql: bc.affected_sql.clone(),
-                })
-                .collect(),
-            statement_count: m.statement_count,
-            source_state_hash: m.source_state_hash.clone(),
-            target_state_hash: m.target_state_hash.clone(),
-            compiled_at: m.compiled_at.clone(),
+            id: data::get_id(),
+            description: data::get_description(),
+            breaking_changes,
+            statement_count: data::get_statement_count(),
+            source_state_hash: data::get_source_state_hash(),
+            target_state_hash: data::get_target_state_hash(),
+            compiled_at: data::get_compiled_at(),
         }
     }
 
+    /// Get all statements from the migration-data interface.
+    fn get_all_statements() -> Vec<Statement> {
+        let count = data::get_statement_count();
+        (0..count)
+            .map(|i| {
+                let stmt = data::get_statement(i);
+                Statement {
+                    sql: stmt.sql,
+                    description: stmt.description,
+                    sequence: stmt.sequence,
+                }
+            })
+            .collect()
+    }
+
     /// Convert WIT mitigation strategy to our internal type.
-    fn convert_mitigation(
-        m: &tern::migration::migration::MitigationStrategy,
-    ) -> MitigationStrategy {
-        use tern::migration::migration::MitigationStrategy as WitMs;
+    fn convert_mitigation(m: &data::MitigationStrategy) -> MitigationStrategy {
         match m {
-            WitMs::DualWrite => MitigationStrategy::DualWrite,
-            WitMs::Backfill => MitigationStrategy::Backfill,
-            WitMs::Ratchet => MitigationStrategy::Ratchet,
-            WitMs::Destructive => MitigationStrategy::Destructive,
+            data::MitigationStrategy::DualWrite => MitigationStrategy::DualWrite,
+            data::MitigationStrategy::Backfill => MitigationStrategy::Backfill,
+            data::MitigationStrategy::Ratchet => MitigationStrategy::Ratchet,
+            data::MitigationStrategy::Destructive => MitigationStrategy::Destructive,
         }
     }
 
     /// Print to stdout using WASI.
     fn print_stdout(s: &str) {
-        use wasi::io::streams::StreamError;
-
         let stdout = wasi::cli::stdout::get_stdout();
-        let bytes = s.as_bytes();
-        let mut offset = 0;
-
-        while offset < bytes.len() {
-            match stdout.blocking_write_and_flush(&bytes[offset..]) {
-                Ok(()) => break,
-                Err(StreamError::Closed) => break,
-                Err(StreamError::LastOperationFailed(_)) => break,
-            }
-        }
+        // Ignore errors - best effort output
+        let _ = stdout.blocking_write_and_flush(s.as_bytes());
     }
 
     /// Print to stderr using WASI.
     fn print_stderr(s: &str) {
-        use wasi::io::streams::StreamError;
-
         let stderr = wasi::cli::stderr::get_stderr();
-        let bytes = s.as_bytes();
-
-        match stderr.blocking_write_and_flush(bytes) {
-            Ok(()) => {}
-            Err(StreamError::Closed) => {}
-            Err(StreamError::LastOperationFailed(_)) => {}
-        }
+        // Ignore errors - best effort output
+        let _ = stderr.blocking_write_and_flush(s.as_bytes());
     }
 
     // Export the component

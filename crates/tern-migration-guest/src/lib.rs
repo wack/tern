@@ -51,54 +51,52 @@ pub use tern_migration_wit::{
 mod wasm {
     // Generate bindings for the guest world
     wit_bindgen::generate!({
-        path: "../tern-migration-wit/wit",
+        path: "../tern-migration-wit/wit/tern-guest",
         world: "tern-guest",
-        // Export the migration interface
-        exports: {
-            "tern:migration/migration@0.1.0": GuestImpl,
-        },
+        generate_all,
     });
+
+    // Aliases for the exported types from the migration interface
+    use exports::tern::migration::migration::{
+        BreakingChange, Guest, Metadata, MitigationStrategy, Statement,
+    };
 
     /// The guest implementation that delegates to imported interfaces.
     pub struct GuestImpl;
 
-    impl exports::tern::migration::migration::Guest for GuestImpl {
+    impl Guest for GuestImpl {
         /// Build metadata from the imported migration-data interface.
-        fn describe() -> exports::tern::migration::migration::Metadata {
-            use tern::migration_data::migration_data;
-
+        fn describe() -> Metadata {
             // Get breaking changes from data component
-            let data_breaking_changes = migration_data::get_breaking_changes();
-            let breaking_changes: Vec<exports::tern::migration::migration::BreakingChange> =
-                data_breaking_changes
-                    .into_iter()
-                    .map(|bc| exports::tern::migration::migration::BreakingChange {
-                        description: bc.description,
-                        mitigation: convert_mitigation_strategy(bc.mitigation),
-                        affected_sql: bc.affected_sql,
-                    })
-                    .collect();
+            let data_breaking_changes =
+                tern::migration_data::migration_data::get_breaking_changes();
+            let breaking_changes: Vec<BreakingChange> = data_breaking_changes
+                .into_iter()
+                .map(|bc| BreakingChange {
+                    description: bc.description,
+                    mitigation: convert_mitigation_strategy(bc.mitigation),
+                    affected_sql: bc.affected_sql,
+                })
+                .collect();
 
-            exports::tern::migration::migration::Metadata {
-                id: migration_data::get_id(),
-                description: migration_data::get_description(),
+            Metadata {
+                id: tern::migration_data::migration_data::get_id(),
+                description: tern::migration_data::migration_data::get_description(),
                 breaking_changes,
-                statement_count: migration_data::get_statement_count(),
-                source_state_hash: migration_data::get_source_state_hash(),
-                target_state_hash: migration_data::get_target_state_hash(),
-                compiled_at: migration_data::get_compiled_at(),
+                statement_count: tern::migration_data::migration_data::get_statement_count(),
+                source_state_hash: tern::migration_data::migration_data::get_source_state_hash(),
+                target_state_hash: tern::migration_data::migration_data::get_target_state_hash(),
+                compiled_at: tern::migration_data::migration_data::get_compiled_at(),
             }
         }
 
         /// Get all statements from the imported migration-data interface.
-        fn get_statements() -> Vec<exports::tern::migration::migration::Statement> {
-            use tern::migration_data::migration_data;
-
-            let count = migration_data::get_statement_count();
+        fn get_statements() -> Vec<Statement> {
+            let count = tern::migration_data::migration_data::get_statement_count();
             (0..count)
                 .map(|i| {
-                    let stmt = migration_data::get_statement(i);
-                    exports::tern::migration::migration::Statement {
+                    let stmt = tern::migration_data::migration_data::get_statement(i);
+                    Statement {
                         sql: stmt.sql,
                         description: stmt.description,
                         sequence: stmt.sequence,
@@ -111,12 +109,11 @@ mod wasm {
         fn run() -> Result<(), String> {
             use tern::migration::database;
             use tern::migration::log;
-            use tern::migration_data::migration_data;
 
-            let count = migration_data::get_statement_count();
+            let count = tern::migration_data::migration_data::get_statement_count();
 
             for i in 0..count {
-                let stmt = migration_data::get_statement(i);
+                let stmt = tern::migration_data::migration_data::get_statement(i);
 
                 // Log progress
                 log::log(
@@ -150,15 +147,14 @@ mod wasm {
     /// Convert mitigation strategy from data format to migration format.
     fn convert_mitigation_strategy(
         strategy: tern::migration_data::migration_data::MitigationStrategy,
-    ) -> exports::tern::migration::migration::MitigationStrategy {
-        use exports::tern::migration::migration::MitigationStrategy as ExportMs;
+    ) -> MitigationStrategy {
         use tern::migration_data::migration_data::MitigationStrategy as ImportMs;
 
         match strategy {
-            ImportMs::DualWrite => ExportMs::DualWrite,
-            ImportMs::Backfill => ExportMs::Backfill,
-            ImportMs::Ratchet => ExportMs::Ratchet,
-            ImportMs::Destructive => ExportMs::Destructive,
+            ImportMs::DualWrite => MitigationStrategy::DualWrite,
+            ImportMs::Backfill => MitigationStrategy::Backfill,
+            ImportMs::Ratchet => MitigationStrategy::Ratchet,
+            ImportMs::Destructive => MitigationStrategy::Destructive,
         }
     }
 

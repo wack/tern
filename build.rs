@@ -19,33 +19,63 @@
 //! - `TERN_RUNNER_WASM_PATH`: Path to compiled runner.wasm
 //! - `TERN_GUEST_WASM_PATH`: Path to compiled guest.wasm
 //!
-//! # Current Status
+//! # Feature Flags
 //!
-//! The WASI compilation is currently disabled because:
-//! - `tern-migration-runner` needs to be rewritten for WASI (remove wasmtime dependency)
-//! - `tern-migration-guest` needs to be rewritten for WASI
-//!
-//! Once those crates are updated, uncomment the compilation code below.
+//! When both components are successfully compiled, the `embedded-wasi` feature
+//! is enabled, which causes embedded.rs to include the compiled components.
 
 use std::env;
 use std::path::PathBuf;
+use std::process::Command;
 
 fn main() {
     // Tell Cargo to rerun this script if certain files change
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=crates/tern-migration-runner/src/");
     println!("cargo:rerun-if-changed=crates/tern-migration-guest/src/");
+    println!("cargo:rerun-if-changed=crates/tern-migration-wit/wit/");
 
     // Get the output directory for build artifacts
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
 
-    // Placeholder paths for the Wasm components
-    // These will be set properly once the WASI rewrite is complete
+    // Paths for the compiled WASI components
     let runner_wasm_path = out_dir.join("runner.wasm");
     let guest_wasm_path = out_dir.join("guest.wasm");
 
+    // Check if we should attempt WASI compilation
+    let wasi_available = is_wasi_target_available();
+
+    if wasi_available {
+        println!("cargo:warning=wasm32-wasip2 target available, attempting WASI compilation...");
+
+        let runner_ok = compile_wasi_component(
+            "tern-migration-runner",
+            "crates/tern-migration-runner",
+            &runner_wasm_path,
+        )
+        .is_ok();
+
+        let guest_ok = compile_wasi_component(
+            "tern-migration-guest",
+            "crates/tern-migration-guest",
+            &guest_wasm_path,
+        )
+        .is_ok();
+
+        if runner_ok && guest_ok {
+            println!("cargo:warning=WASI components compiled successfully!");
+            println!("cargo:rustc-cfg=feature=\"embedded-wasi\"");
+        } else {
+            println!("cargo:warning=WASI compilation failed, falling back to cargo-based pipeline");
+        }
+    } else {
+        println!("cargo:warning=wasm32-wasip2 target not available");
+        println!("cargo:warning=Install with: rustup target add wasm32-wasip2");
+        println!("cargo:warning=Falling back to cargo-based compilation pipeline");
+    }
+
     // Export paths as environment variables for use in src/db/compile/embedded.rs
-    // NOTE: These files don't exist yet - the embedded.rs module handles this gracefully
+    // These are always set, but embedded.rs only uses them when embedded-wasi feature is enabled
     println!(
         "cargo:rustc-env=TERN_RUNNER_WASM_PATH={}",
         runner_wasm_path.display()
@@ -54,90 +84,99 @@ fn main() {
         "cargo:rustc-env=TERN_GUEST_WASM_PATH={}",
         guest_wasm_path.display()
     );
+}
 
-    // =========================================================================
-    // WASI Component Compilation (currently disabled)
-    // =========================================================================
-    //
-    // Once the runner and guest crates are rewritten for WASI, uncomment and
-    // complete this section. The general approach is:
-    //
-    // 1. Check if wasm32-wasip2 target is available
-    // 2. Compile each crate to that target
-    // 3. Optionally, use wasm-tools to convert to component format
-    //
-    // ```
-    // compile_wasi_component(
-    //     "tern-migration-runner",
-    //     "crates/tern-migration-runner",
-    //     &runner_wasm_path,
-    // );
-    //
-    // compile_wasi_component(
-    //     "tern-migration-guest",
-    //     "crates/tern-migration-guest",
-    //     &guest_wasm_path,
-    // );
-    // ```
-
-    // For now, just print a note about the missing components
-    if !runner_wasm_path.exists() {
-        println!(
-            "cargo:warning=Runner WASM component not available (WASI rewrite pending): {}",
-            runner_wasm_path.display()
-        );
+/// Check if the wasm32-wasip2 target is available.
+fn is_wasi_target_available() -> bool {
+    // Check environment variable to skip WASI compilation
+    if env::var("TERN_SKIP_WASI_BUILD").is_ok() {
+        println!("cargo:warning=TERN_SKIP_WASI_BUILD set, skipping WASI compilation");
+        return false;
     }
 
-    if !guest_wasm_path.exists() {
-        println!(
-            "cargo:warning=Guest WASM component not available (WASI rewrite pending): {}",
-            guest_wasm_path.display()
-        );
+    // Try to get the list of installed targets
+    let output = match Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output()
+    {
+        Ok(output) => output,
+        Err(_) => {
+            // rustup not available, try cargo instead
+            return check_cargo_target_available();
+        }
+    };
+
+    if !output.status.success() {
+        return check_cargo_target_available();
     }
+
+    let installed = String::from_utf8_lossy(&output.stdout);
+    installed.lines().any(|line| line.trim() == "wasm32-wasip2")
+}
+
+/// Fallback check using cargo to see if the target works.
+fn check_cargo_target_available() -> bool {
+    // Try a minimal cargo check to see if the target works
+    let output = Command::new("cargo")
+        .args([
+            "check",
+            "--target",
+            "wasm32-wasip2",
+            "--manifest-path",
+            "crates/tern-migration-wit/Cargo.toml",
+        ])
+        .output();
+
+    matches!(output, Ok(o) if o.status.success())
 }
 
 /// Compile a crate to a WASI component.
-///
-/// This function will be used once the runner and guest crates are rewritten
-/// to target WASI.
 ///
 /// # Arguments
 ///
 /// * `crate_name` - Name of the crate to compile
 /// * `crate_path` - Path to the crate directory
 /// * `output_path` - Where to write the compiled .wasm file
-#[allow(dead_code)]
 fn compile_wasi_component(
     crate_name: &str,
     crate_path: &str,
     output_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use std::process::Command;
+    println!("cargo:warning=Compiling {} to wasm32-wasip2...", crate_name);
 
-    println!("cargo:warning=Compiling {} to WASI...", crate_name);
+    // Get the workspace root (build.rs runs from the package root)
+    let manifest_path = format!("{}/Cargo.toml", crate_path);
 
     // Build the crate for wasm32-wasip2 target
-    let status = Command::new("cargo")
+    let output = Command::new("cargo")
         .args([
             "build",
             "--release",
             "--target",
             "wasm32-wasip2",
             "--manifest-path",
-            &format!("{}/Cargo.toml", crate_path),
+            &manifest_path,
         ])
-        .status()?;
+        .env("CARGO_TARGET_DIR", "target") // Use shared target dir
+        .output()?;
 
-    if !status.success() {
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        println!("cargo:warning=Failed to compile {}: {}", crate_name, stderr);
         return Err(format!("Failed to compile {} to WASI", crate_name).into());
     }
 
     // Find the compiled wasm file
-    let wasm_file = PathBuf::from(crate_path)
-        .join("target/wasm32-wasip2/release")
-        .join(format!("{}.wasm", crate_name.replace('-', "_")));
+    // The crate name with dashes becomes underscores in the binary
+    let binary_name = crate_name.replace('-', "_");
+    let wasm_file =
+        PathBuf::from("target/wasm32-wasip2/release").join(format!("{}.wasm", binary_name));
 
     if !wasm_file.exists() {
+        println!(
+            "cargo:warning=Compiled wasm not found at: {}",
+            wasm_file.display()
+        );
         return Err(format!("Compiled wasm not found at: {}", wasm_file.display()).into());
     }
 
@@ -145,45 +184,10 @@ fn compile_wasi_component(
     std::fs::copy(&wasm_file, output_path)?;
 
     println!(
-        "cargo:warning=Successfully compiled {} to {}",
+        "cargo:warning=Successfully compiled {} ({} bytes)",
         crate_name,
-        output_path.display()
+        std::fs::metadata(output_path)?.len()
     );
-
-    Ok(())
-}
-
-/// Convert a WASI module to a component using wasm-tools.
-///
-/// WASI Preview 2 components may need additional processing after
-/// compilation. This function handles that conversion.
-///
-/// # Arguments
-///
-/// * `module_path` - Path to the input .wasm module
-/// * `component_path` - Path to write the output component
-#[allow(dead_code)]
-fn convert_to_component(
-    module_path: &std::path::Path,
-    component_path: &std::path::Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use std::process::Command;
-
-    // Use wasm-tools to convert module to component
-    // This may be needed depending on how the crates are compiled
-    let status = Command::new("wasm-tools")
-        .args([
-            "component",
-            "new",
-            module_path.to_str().unwrap(),
-            "-o",
-            component_path.to_str().unwrap(),
-        ])
-        .status()?;
-
-    if !status.success() {
-        return Err(format!("Failed to convert {} to component", module_path.display()).into());
-    }
 
     Ok(())
 }
