@@ -7,7 +7,7 @@ mod colors;
 pub mod commands;
 
 pub use colors::EnableColors;
-pub use commands::OutputFormat;
+pub use commands::{ArtifactFormat, OutputFormat};
 
 use std::path::PathBuf;
 
@@ -111,7 +111,7 @@ pub enum CliCommand {
         #[arg(long, default_value = "public")]
         schema: String,
 
-        /// Output path for the generated source code
+        /// Output path for the generated artifact (binary or OCI image)
         #[arg(short, long)]
         output: Option<PathBuf>,
 
@@ -135,9 +135,13 @@ pub enum CliCommand {
         #[arg(long)]
         show_sql: bool,
 
-        /// Output format
+        /// Output format for console output
         #[arg(long, default_value = "text")]
         format: OutputFormat,
+
+        /// Artifact format to produce (binary or oci)
+        #[arg(long, default_value = "binary")]
+        artifact: commands::ArtifactFormat,
 
         /// Path to the state directory
         #[arg(long)]
@@ -363,6 +367,7 @@ impl CliCommand {
                 dry_run,
                 show_sql,
                 format,
+                artifact,
                 state_path,
             } => {
                 commands::run_compile(
@@ -375,6 +380,7 @@ impl CliCommand {
                     dry_run,
                     show_sql,
                     format,
+                    artifact,
                     state_path.as_deref(),
                 )
                 .await

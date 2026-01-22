@@ -8,8 +8,11 @@ use std::path::PathBuf;
 use miette::{Context, IntoDiagnostic, miette};
 use serde::Serialize;
 
-use super::{OutputFormat, ensure_backend_initialized, load_backend, print_json};
-use crate::db::compile::{CompileOptions, Target, compile_migration};
+use super::{ArtifactFormat, OutputFormat, ensure_backend_initialized, load_backend, print_json};
+use crate::db::compile::{
+    CompileOptions, ExecutableBuilder, MigrationData, OciImageBuilder, StatementData, Target,
+    compile_migration,
+};
 use crate::db::query::PostgresCatalog;
 use crate::db::state::StateBackend;
 use crate::db::{self};
@@ -103,6 +106,7 @@ impl std::fmt::Display for CompileOutput {
 /// * `dry_run` - Preview without writing
 /// * `show_sql` - Include SQL statements in output
 /// * `format` - Output format
+/// * `artifact` - Artifact format (binary or OCI image)
 /// * `state_path` - Optional path to the state directory
 #[allow(clippy::too_many_arguments)]
 pub async fn run_compile(
@@ -115,6 +119,7 @@ pub async fn run_compile(
     dry_run: bool,
     show_sql: bool,
     format: OutputFormat,
+    artifact: ArtifactFormat,
     state_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
     // Parse target
@@ -205,7 +210,7 @@ pub async fn run_compile(
         breaking_changes,
     };
 
-    // Write output if requested
+    // Build artifact if output path is provided
     if let Some(ref output_path) = output
         && !dry_run
     {
@@ -216,10 +221,82 @@ pub async fn run_compile(
                 .wrap_err("Failed to create output directory")?;
         }
 
-        // Write the source code
-        std::fs::write(output_path, result.source_code())
-            .into_diagnostic()
-            .wrap_err("Failed to write output file")?;
+        // Build the migration data for the executable
+        let migration_data = MigrationData {
+            id: result.migration_id(),
+            description: description.to_string(),
+            source_state_hash: result.source_hash.to_hex(),
+            target_state_hash: result.target_hash.to_hex(),
+            compiled_at: result.migration.created_at.to_string(),
+            statements: result
+                .compilation
+                .statements
+                .iter()
+                .enumerate()
+                .map(|(i, s)| StatementData::new(&s.sql, &s.description, (i + 1) as u32))
+                .collect(),
+            breaking_changes: vec![], // Simplified for now
+        };
+
+        match artifact {
+            ArtifactFormat::Binary => {
+                println!("Building executable for target '{}'...", target);
+
+                let builder = ExecutableBuilder::new();
+                let build_result = builder
+                    .build_from_data(&migration_data, output_path, target)
+                    .into_diagnostic()
+                    .wrap_err("Failed to build executable")?;
+
+                println!(
+                    "Executable written to: {} ({} bytes component)",
+                    build_result.output_path.display(),
+                    build_result.component_size
+                );
+            }
+            ArtifactFormat::Oci => {
+                // For OCI, ensure the output path ends with .tar.gz
+                let oci_output_path = if !output_path.to_string_lossy().ends_with(".tar.gz")
+                    && !output_path.to_string_lossy().ends_with(".tgz")
+                {
+                    output_path.with_extension("tar.gz")
+                } else {
+                    output_path.clone()
+                };
+
+                println!("Building OCI image for target '{}'...", target);
+
+                // First, build the executable to get the binary bytes
+                let temp_dir = tempfile::tempdir()
+                    .into_diagnostic()
+                    .wrap_err("Failed to create temporary directory")?;
+                let temp_binary_path = temp_dir.path().join("migration");
+
+                let exe_builder = ExecutableBuilder::new();
+                let build_result = exe_builder
+                    .build_from_data(&migration_data, &temp_binary_path, target)
+                    .into_diagnostic()
+                    .wrap_err("Failed to build executable for OCI image")?;
+
+                // Read the binary bytes
+                let executable_bytes = std::fs::read(&build_result.output_path)
+                    .into_diagnostic()
+                    .wrap_err("Failed to read built executable")?;
+
+                // Build the OCI image
+                let oci_builder = OciImageBuilder::new();
+                let oci_result = oci_builder
+                    .build(&executable_bytes, &oci_output_path, target)
+                    .into_diagnostic()
+                    .wrap_err("Failed to build OCI image")?;
+
+                println!(
+                    "OCI image written to: {} (manifest: {})",
+                    oci_result.output_path.display(),
+                    &oci_result.manifest_digest[7..19] // Show short digest
+                );
+            }
+        }
     }
 
     // Record migration if requested

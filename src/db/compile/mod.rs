@@ -148,6 +148,7 @@ mod data_component;
 mod embedded;
 mod error;
 mod executable;
+mod oci;
 
 pub use aot::{AotCompiler, AotOutput, AotResult, AotTarget};
 pub use codegen::{
@@ -163,6 +164,7 @@ pub use embedded::{
 };
 pub use error::CompileError;
 pub use executable::{BuildResult, ExecutableBuilder, Target};
+pub use oci::{OciBuildResult, OciImageBuilder};
 
 use crate::db::diff::breaking::analyze_breaking_changes;
 use crate::db::diff::diff_namespaces;

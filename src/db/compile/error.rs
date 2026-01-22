@@ -215,6 +215,27 @@ pub enum CompileError {
         /// The error message.
         message: String,
     },
+
+    /// I/O operation failed.
+    #[error("I/O error for {path}: {source}")]
+    #[diagnostic(code(tern::compile::io))]
+    Io {
+        /// The path involved in the operation.
+        path: String,
+        /// The underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// Serialization failed for OCI image generation.
+    #[error("{context} serialization failed: {message}")]
+    #[diagnostic(code(tern::compile::oci_serialization))]
+    Serialization {
+        /// What was being serialized.
+        context: String,
+        /// The error message.
+        message: String,
+    },
 }
 
 impl CompileError {
