@@ -403,9 +403,10 @@ mod tests {
             content.contains("world tern-runner"),
             "Runner WIT file should define tern-runner world"
         );
+        // Runner imports migration-data directly (simplified 2-component architecture)
         assert!(
-            content.contains("import tern:migration/migration"),
-            "Runner world should import migration interface"
+            content.contains("import tern:migration-data/migration-data"),
+            "Runner world should import migration-data interface"
         );
         assert!(
             content.contains("export wasi:cli/run"),
