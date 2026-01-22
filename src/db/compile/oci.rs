@@ -45,7 +45,11 @@ use std::time::SystemTime;
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use serde::Serialize;
+use oci_spec::image::{
+    Arch, ConfigBuilder, DescriptorBuilder, Digest as OciDigest, ImageConfigurationBuilder,
+    ImageIndexBuilder, ImageManifestBuilder, MediaType, OciLayoutBuilder, Os, PlatformBuilder,
+    RootFsBuilder, SCHEMA_VERSION, Sha256Digest,
+};
 use sha2::{Digest, Sha256};
 use tar::Builder as TarBuilder;
 
@@ -90,87 +94,6 @@ impl OciConfig {
         self
     }
 }
-
-// =============================================================================
-// OCI JSON Structures (manually defined for simplicity and compatibility)
-// =============================================================================
-
-/// OCI image layout marker.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct OciLayout {
-    image_layout_version: &'static str,
-}
-
-/// OCI descriptor for referencing blobs.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct OciDescriptor {
-    media_type: &'static str,
-    digest: String,
-    size: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    platform: Option<OciPlatform>,
-}
-
-/// OCI platform specification.
-#[derive(Debug, Serialize)]
-struct OciPlatform {
-    architecture: String,
-    os: String,
-}
-
-/// OCI image index (multi-platform image entry point).
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct OciIndex {
-    schema_version: u32,
-    media_type: &'static str,
-    manifests: Vec<OciDescriptor>,
-}
-
-/// OCI image manifest.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct OciManifest {
-    schema_version: u32,
-    media_type: &'static str,
-    config: OciDescriptor,
-    layers: Vec<OciDescriptor>,
-}
-
-/// OCI image configuration.
-#[derive(Debug, Serialize)]
-struct OciImageConfig {
-    architecture: String,
-    os: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    author: Option<String>,
-    config: OciContainerConfig,
-    rootfs: OciRootFs,
-}
-
-/// Container runtime configuration.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "PascalCase")]
-struct OciContainerConfig {
-    entrypoint: Vec<String>,
-    working_dir: String,
-}
-
-/// Root filesystem specification.
-#[derive(Debug, Serialize)]
-struct OciRootFs {
-    #[serde(rename = "type")]
-    typ: &'static str,
-    diff_ids: Vec<String>,
-}
-
-// Media type constants
-const MEDIA_TYPE_IMAGE_INDEX: &str = "application/vnd.oci.image.index.v1+json";
-const MEDIA_TYPE_IMAGE_MANIFEST: &str = "application/vnd.oci.image.manifest.v1+json";
-const MEDIA_TYPE_IMAGE_CONFIG: &str = "application/vnd.oci.image.config.v1+json";
-const MEDIA_TYPE_LAYER_GZIP: &str = "application/vnd.oci.image.layer.v1.tar+gzip";
 
 // =============================================================================
 // OCI Image Builder
@@ -219,7 +142,7 @@ impl OciImageBuilder {
         let (arch, os) = target_to_oci_platform(target);
 
         // Build the image
-        self.build_from_bytes(&executable_bytes, output_path, &arch, &os)
+        self.build_from_bytes(&executable_bytes, output_path, arch, os)
     }
 
     /// Builds an OCI image from executable bytes.
@@ -230,8 +153,8 @@ impl OciImageBuilder {
         &self,
         executable_bytes: &[u8],
         output_path: &Path,
-        arch: &str,
-        os: &str,
+        arch: Arch,
+        os: Os,
     ) -> Result<OciBuildResult, CompileError> {
         // Ensure output directory exists
         if let Some(parent) = output_path.parent() {
@@ -250,7 +173,7 @@ impl OciImageBuilder {
 
         // Create the image configuration
         let config_json =
-            self.create_image_config(&uncompressed_digest, arch.to_string(), os.to_string())?;
+            self.create_image_config(&uncompressed_digest, arch.clone(), os.clone())?;
         let config_bytes = config_json.as_bytes().to_vec();
         let config_digest = compute_sha256(&config_bytes);
         let config_size = config_bytes.len() as u64;
@@ -263,18 +186,14 @@ impl OciImageBuilder {
         let manifest_size = manifest_bytes.len() as u64;
 
         // Create the index
-        let index_json = self.create_index(
-            &manifest_digest,
-            manifest_size,
-            arch.to_string(),
-            os.to_string(),
-        )?;
+        let index_json = self.create_index(&manifest_digest, manifest_size, arch, os)?;
         let index_bytes = index_json.as_bytes().to_vec();
 
         // Create the OCI layout file
-        let layout = OciLayout {
-            image_layout_version: "1.0.0",
-        };
+        let layout = OciLayoutBuilder::default()
+            .image_layout_version("1.0.0")
+            .build()
+            .map_err(|e| CompileError::oci_generation(format!("layout builder: {}", e)))?;
         let layout_json = serde_json::to_string(&layout)
             .map_err(|e| CompileError::oci_generation(format!("layout serialization: {}", e)))?;
 
@@ -394,26 +313,38 @@ impl OciImageBuilder {
     fn create_image_config(
         &self,
         layer_diff_id: &str,
-        arch: String,
-        os: String,
+        arch: Arch,
+        os: Os,
     ) -> Result<String, CompileError> {
         let entrypoint = format!("/{}", self.config.executable_name);
 
-        let config = OciImageConfig {
-            architecture: arch,
-            os,
-            author: self.config.author.clone(),
-            config: OciContainerConfig {
-                entrypoint: vec![entrypoint],
-                working_dir: self.config.working_dir.clone(),
-            },
-            rootfs: OciRootFs {
-                typ: "layers",
-                diff_ids: vec![format!("sha256:{}", layer_diff_id)],
-            },
-        };
+        let container_config = ConfigBuilder::default()
+            .entrypoint(vec![entrypoint])
+            .working_dir(self.config.working_dir.clone())
+            .build()
+            .map_err(|e| CompileError::oci_generation(format!("config builder: {}", e)))?;
 
-        serde_json::to_string(&config)
+        let rootfs = RootFsBuilder::default()
+            .typ("layers")
+            .diff_ids(vec![format!("sha256:{}", layer_diff_id)])
+            .build()
+            .map_err(|e| CompileError::oci_generation(format!("rootfs builder: {}", e)))?;
+
+        let mut image_config_builder = ImageConfigurationBuilder::default()
+            .architecture(arch)
+            .os(os)
+            .config(container_config)
+            .rootfs(rootfs);
+
+        if let Some(ref author) = self.config.author {
+            image_config_builder = image_config_builder.author(author.clone());
+        }
+
+        let image_config = image_config_builder
+            .build()
+            .map_err(|e| CompileError::oci_generation(format!("image config: {}", e)))?;
+
+        serde_json::to_string(&image_config)
             .map_err(|e| CompileError::oci_generation(format!("config serialization: {}", e)))
     }
 
@@ -425,22 +356,34 @@ impl OciImageBuilder {
         layer_digest: &str,
         layer_size: u64,
     ) -> Result<String, CompileError> {
-        let manifest = OciManifest {
-            schema_version: 2,
-            media_type: MEDIA_TYPE_IMAGE_MANIFEST,
-            config: OciDescriptor {
-                media_type: MEDIA_TYPE_IMAGE_CONFIG,
-                digest: format!("sha256:{}", config_digest),
-                size: config_size,
-                platform: None,
-            },
-            layers: vec![OciDescriptor {
-                media_type: MEDIA_TYPE_LAYER_GZIP,
-                digest: format!("sha256:{}", layer_digest),
-                size: layer_size,
-                platform: None,
-            }],
-        };
+        let config_sha256: Sha256Digest = config_digest
+            .parse()
+            .map_err(|e| CompileError::oci_generation(format!("config digest parse: {}", e)))?;
+        let layer_sha256: Sha256Digest = layer_digest
+            .parse()
+            .map_err(|e| CompileError::oci_generation(format!("layer digest parse: {}", e)))?;
+
+        let config_descriptor = DescriptorBuilder::default()
+            .media_type(MediaType::ImageConfig)
+            .digest(OciDigest::from(config_sha256))
+            .size(config_size)
+            .build()
+            .map_err(|e| CompileError::oci_generation(format!("config descriptor: {}", e)))?;
+
+        let layer_descriptor = DescriptorBuilder::default()
+            .media_type(MediaType::ImageLayerGzip)
+            .digest(OciDigest::from(layer_sha256))
+            .size(layer_size)
+            .build()
+            .map_err(|e| CompileError::oci_generation(format!("layer descriptor: {}", e)))?;
+
+        let manifest = ImageManifestBuilder::default()
+            .schema_version(SCHEMA_VERSION)
+            .media_type(MediaType::ImageManifest)
+            .config(config_descriptor)
+            .layers(vec![layer_descriptor])
+            .build()
+            .map_err(|e| CompileError::oci_generation(format!("manifest: {}", e)))?;
 
         serde_json::to_string(&manifest)
             .map_err(|e| CompileError::oci_generation(format!("manifest serialization: {}", e)))
@@ -451,22 +394,33 @@ impl OciImageBuilder {
         &self,
         manifest_digest: &str,
         manifest_size: u64,
-        arch: String,
-        os: String,
+        arch: Arch,
+        os: Os,
     ) -> Result<String, CompileError> {
-        let index = OciIndex {
-            schema_version: 2,
-            media_type: MEDIA_TYPE_IMAGE_INDEX,
-            manifests: vec![OciDescriptor {
-                media_type: MEDIA_TYPE_IMAGE_MANIFEST,
-                digest: format!("sha256:{}", manifest_digest),
-                size: manifest_size,
-                platform: Some(OciPlatform {
-                    architecture: arch,
-                    os,
-                }),
-            }],
-        };
+        let manifest_sha256: Sha256Digest = manifest_digest
+            .parse()
+            .map_err(|e| CompileError::oci_generation(format!("manifest digest parse: {}", e)))?;
+
+        let platform = PlatformBuilder::default()
+            .architecture(arch)
+            .os(os)
+            .build()
+            .map_err(|e| CompileError::oci_generation(format!("platform: {}", e)))?;
+
+        let manifest_descriptor = DescriptorBuilder::default()
+            .media_type(MediaType::ImageManifest)
+            .digest(OciDigest::from(manifest_sha256))
+            .size(manifest_size)
+            .platform(platform)
+            .build()
+            .map_err(|e| CompileError::oci_generation(format!("manifest descriptor: {}", e)))?;
+
+        let index = ImageIndexBuilder::default()
+            .schema_version(SCHEMA_VERSION)
+            .media_type(MediaType::ImageIndex)
+            .manifests(vec![manifest_descriptor])
+            .build()
+            .map_err(|e| CompileError::oci_generation(format!("index: {}", e)))?;
 
         serde_json::to_string(&index)
             .map_err(|e| CompileError::oci_generation(format!("index serialization: {}", e)))
@@ -520,36 +474,34 @@ fn compute_sha256(data: &[u8]) -> String {
 }
 
 /// Converts a compilation target to OCI platform (arch, os).
-fn target_to_oci_platform(target: Target) -> (String, String) {
+fn target_to_oci_platform(target: Target) -> (Arch, Os) {
     match target {
         Target::Native => {
             // Detect current platform
             let arch = if cfg!(target_arch = "x86_64") {
-                "amd64"
+                Arch::Amd64
             } else if cfg!(target_arch = "aarch64") {
-                "arm64"
+                Arch::ARM64
             } else {
-                "amd64" // Default fallback
+                Arch::Amd64 // Default fallback
             };
 
             let os = if cfg!(target_os = "linux") {
-                "linux"
+                Os::Linux
             } else if cfg!(target_os = "macos") {
-                "darwin"
+                Os::Darwin
             } else if cfg!(target_os = "windows") {
-                "windows"
+                Os::Windows
             } else {
-                "linux" // Default fallback
+                Os::Linux // Default fallback
             };
 
-            (arch.to_string(), os.to_string())
+            (arch, os)
         }
-        Target::X86_64LinuxGnu | Target::X86_64LinuxMusl => {
-            ("amd64".to_string(), "linux".to_string())
-        }
-        Target::X86_64MacOS => ("amd64".to_string(), "darwin".to_string()),
-        Target::Aarch64MacOS => ("arm64".to_string(), "darwin".to_string()),
-        Target::X86_64Windows => ("amd64".to_string(), "windows".to_string()),
+        Target::X86_64LinuxGnu | Target::X86_64LinuxMusl => (Arch::Amd64, Os::Linux),
+        Target::X86_64MacOS => (Arch::Amd64, Os::Darwin),
+        Target::Aarch64MacOS => (Arch::ARM64, Os::Darwin),
+        Target::X86_64Windows => (Arch::Amd64, Os::Windows),
     }
 }
 
@@ -609,15 +561,15 @@ mod tests {
     #[test]
     fn target_to_oci_platform_linux() {
         let (arch, os) = target_to_oci_platform(Target::X86_64LinuxMusl);
-        assert_eq!(arch, "amd64");
-        assert_eq!(os, "linux");
+        assert_eq!(arch, Arch::Amd64);
+        assert_eq!(os, Os::Linux);
     }
 
     #[test]
     fn target_to_oci_platform_macos() {
         let (arch, os) = target_to_oci_platform(Target::Aarch64MacOS);
-        assert_eq!(arch, "arm64");
-        assert_eq!(os, "darwin");
+        assert_eq!(arch, Arch::ARM64);
+        assert_eq!(os, Os::Darwin);
     }
 
     #[test]
@@ -636,7 +588,12 @@ mod tests {
 
         let builder = OciImageBuilder::default();
         let result = builder
-            .build_from_bytes(b"#!/bin/sh\necho hello", &output_path, "amd64", "linux")
+            .build_from_bytes(
+                b"#!/bin/sh\necho hello",
+                &output_path,
+                Arch::Amd64,
+                Os::Linux,
+            )
             .unwrap();
 
         assert!(result.output_path.exists());
@@ -651,7 +608,12 @@ mod tests {
 
         let builder = OciImageBuilder::default();
         builder
-            .build_from_bytes(b"test executable content", &output_path, "amd64", "linux")
+            .build_from_bytes(
+                b"test executable content",
+                &output_path,
+                Arch::Amd64,
+                Os::Linux,
+            )
             .unwrap();
 
         // Verify the tar can be read
