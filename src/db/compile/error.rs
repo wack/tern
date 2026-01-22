@@ -215,6 +215,14 @@ pub enum CompileError {
         /// The error message.
         message: String,
     },
+
+    /// OCI image generation failed.
+    #[error("OCI image generation failed: {message}")]
+    #[diagnostic(code(tern::compile::oci_error))]
+    OciGenerationError {
+        /// The error message.
+        message: String,
+    },
 }
 
 impl CompileError {
@@ -369,6 +377,13 @@ impl CompileError {
             message: message.into(),
         }
     }
+
+    /// Create an OCI image generation error.
+    pub fn oci_generation(message: impl Into<String>) -> Self {
+        Self::OciGenerationError {
+            message: message.into(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -519,6 +534,15 @@ mod tests {
         assert_eq!(
             format!("{}", err),
             "AOT compilation failed: serialization failed"
+        );
+    }
+
+    #[test]
+    fn oci_generation_error_display() {
+        let err = CompileError::oci_generation("manifest creation failed");
+        assert_eq!(
+            format!("{}", err),
+            "OCI image generation failed: manifest creation failed"
         );
     }
 }

@@ -148,6 +148,7 @@ mod data_component;
 mod embedded;
 mod error;
 mod executable;
+pub mod oci;
 
 pub use aot::{AotCompiler, AotOutput, AotResult, AotTarget};
 pub use codegen::{
@@ -162,7 +163,59 @@ pub use embedded::{
     runner_component, runner_component_size, validate_wasm_bytes,
 };
 pub use error::CompileError;
-pub use executable::{BuildResult, ExecutableBuilder, Target};
+pub use executable::{BuildResult, ExecutableBuilder, PackagedBuildResult, Target};
+pub use oci::{OciBuildResult, OciConfig, OciImageBuilder};
+
+// =============================================================================
+// Package Format
+// =============================================================================
+
+/// Output format for packaged migration executables.
+///
+/// Specifies how the compiled migration should be packaged for distribution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum PackageFormat {
+    /// Standalone native binary executable.
+    ///
+    /// The executable can be run directly on the target platform.
+    #[default]
+    Binary,
+
+    /// OCI (Open Container Initiative) image.
+    ///
+    /// The executable is packaged in an OCI-compliant container image
+    /// that can be used with Docker, Podman, or Kubernetes.
+    /// Output is a tar archive in OCI image layout format.
+    Oci,
+}
+
+impl PackageFormat {
+    /// Returns the default file extension for this format.
+    pub fn extension(&self) -> &'static str {
+        match self {
+            Self::Binary => "",
+            Self::Oci => ".tar",
+        }
+    }
+
+    /// Parse a format from a string representation.
+    pub fn from_str_name(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "binary" | "bin" | "executable" | "exe" => Some(Self::Binary),
+            "oci" | "oci-image" | "container" | "docker" => Some(Self::Oci),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for PackageFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Binary => write!(f, "binary"),
+            Self::Oci => write!(f, "oci"),
+        }
+    }
+}
 
 use crate::db::diff::breaking::analyze_breaking_changes;
 use crate::db::diff::diff_namespaces;
