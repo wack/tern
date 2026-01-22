@@ -49,11 +49,13 @@ use std::process::Command;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
+use super::PackageFormat;
 use super::aot::{AotCompiler, AotTarget};
 use super::composer::ComponentComposer;
 use super::data_component::{DataComponentGenerator, MigrationData};
 use super::embedded::{components_available, guest_component, runner_component};
 use super::error::CompileError;
+use super::oci::{OciBuildResult, OciConfig, OciImageBuilder};
 
 // =============================================================================
 // Target Platform
@@ -213,6 +215,54 @@ impl ExecutableBuilder {
 
         // Fall back to relative path from current directory
         PathBuf::from("crates/tern-migration-runner")
+    }
+
+    /// Builds a packaged migration from migration data.
+    ///
+    /// This method supports multiple output formats: binary executables or
+    /// OCI container images.
+    ///
+    /// # Arguments
+    ///
+    /// * `migration_data` - The migration data (SQL statements and metadata)
+    /// * `output_path` - Where to write the resulting package
+    /// * `target` - The target platform to compile for
+    /// * `format` - The output format (binary or OCI)
+    ///
+    /// # Returns
+    ///
+    /// Returns a `PackagedBuildResult` which contains information about the
+    /// built package, regardless of format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if compilation or packaging fails.
+    pub fn build_from_data_with_format(
+        &self,
+        migration_data: &MigrationData,
+        output_path: &Path,
+        target: Target,
+        format: PackageFormat,
+    ) -> Result<PackagedBuildResult, CompileError> {
+        match format {
+            PackageFormat::Binary => {
+                let result = self.build_from_data(migration_data, output_path, target)?;
+                Ok(PackagedBuildResult::Binary(result))
+            }
+            PackageFormat::Oci => {
+                // First build the binary to a temporary location
+                let temp_dir = tempfile::tempdir().map_err(CompileError::temp_dir)?;
+                let temp_binary = temp_dir.path().join("migration");
+                let binary_result = self.build_from_data(migration_data, &temp_binary, target)?;
+
+                // Then package it as an OCI image
+                let oci_builder = OciImageBuilder::new(OciConfig::default());
+                let oci_result =
+                    oci_builder.build(&binary_result.output_path, output_path, target)?;
+
+                Ok(PackagedBuildResult::Oci(oci_result))
+            }
+        }
     }
 
     /// Builds a standalone executable from migration data.
@@ -535,6 +585,51 @@ pub struct BuildResult {
     pub target: Target,
     /// Size of the embedded Wasm component in bytes.
     pub component_size: usize,
+}
+
+/// Result of building a packaged migration (binary or OCI).
+#[derive(Debug, Clone)]
+pub enum PackagedBuildResult {
+    /// Binary executable result.
+    Binary(BuildResult),
+    /// OCI image result.
+    Oci(OciBuildResult),
+}
+
+impl PackagedBuildResult {
+    /// Returns the output path regardless of format.
+    pub fn output_path(&self) -> &Path {
+        match self {
+            Self::Binary(r) => r.output_path(),
+            Self::Oci(r) => r.output_path(),
+        }
+    }
+
+    /// Returns true if this is a binary result.
+    pub fn is_binary(&self) -> bool {
+        matches!(self, Self::Binary(_))
+    }
+
+    /// Returns true if this is an OCI result.
+    pub fn is_oci(&self) -> bool {
+        matches!(self, Self::Oci(_))
+    }
+
+    /// Returns the binary result if this is a binary, None otherwise.
+    pub fn as_binary(&self) -> Option<&BuildResult> {
+        match self {
+            Self::Binary(r) => Some(r),
+            Self::Oci(_) => None,
+        }
+    }
+
+    /// Returns the OCI result if this is an OCI image, None otherwise.
+    pub fn as_oci(&self) -> Option<&OciBuildResult> {
+        match self {
+            Self::Binary(_) => None,
+            Self::Oci(r) => Some(r),
+        }
+    }
 }
 
 impl BuildResult {

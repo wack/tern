@@ -144,6 +144,48 @@ pub enum CliCommand {
         state_path: Option<PathBuf>,
     },
 
+    /// Build a migration executable or OCI image
+    ///
+    /// Compares the state backend to the live database and builds a
+    /// standalone migration artifact (binary executable or OCI container image).
+    Build {
+        /// PostgreSQL connection string
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: String,
+
+        /// The database schema to compare
+        #[arg(long, default_value = "public")]
+        schema: String,
+
+        /// Output path for the built artifact
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Migration description
+        #[arg(long)]
+        description: String,
+
+        /// Target platform (native, x86_64-linux-gnu, x86_64-linux-musl, x86_64-macos, aarch64-macos, x86_64-windows)
+        #[arg(long, default_value = "native")]
+        target: String,
+
+        /// Output format: binary (standalone executable) or oci (OCI container image)
+        #[arg(long, default_value = "binary")]
+        package_format: String,
+
+        /// Record the migration to the state backend
+        #[arg(long)]
+        record: bool,
+
+        /// CLI output format
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+
+        /// Path to the state directory
+        #[arg(long)]
+        state_path: Option<PathBuf>,
+    },
+
     /// List migration history
     ///
     /// Shows the ordered list of migrations in the state backend.
@@ -374,6 +416,30 @@ impl CliCommand {
                     record,
                     dry_run,
                     show_sql,
+                    format,
+                    state_path.as_deref(),
+                )
+                .await
+            }
+            CliCommand::Build {
+                database_url,
+                schema,
+                output,
+                description,
+                target,
+                package_format,
+                record,
+                format,
+                state_path,
+            } => {
+                commands::run_build(
+                    &database_url,
+                    &schema,
+                    output,
+                    &description,
+                    &target,
+                    &package_format,
+                    record,
                     format,
                     state_path.as_deref(),
                 )

@@ -3,6 +3,7 @@
 //! This module contains the implementation of all CLI subcommands for managing
 //! migrations and state backends.
 
+pub mod build;
 pub mod compile;
 pub mod history;
 pub mod init;
@@ -13,6 +14,7 @@ pub mod show;
 pub mod status;
 pub mod verify;
 
+pub use build::run_build;
 pub use compile::run_compile;
 pub use history::run_history;
 pub use init::run_init;

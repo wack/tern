@@ -31,6 +31,12 @@ wit-component = "0.227"
 
 async-trait = "0.1.89"
 bon = "3.8.1"
+
+# OCI image generation
+oci-spec = "0.8.4"
+flate2 = "1.1"
+tar = "0.4"
+sha2 = "0.10"
 jiff = { version = "0.2.1", features = ["serde"] }
 blake3 = "1"
 hex = "0.4"
