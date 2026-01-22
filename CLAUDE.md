@@ -151,6 +151,63 @@ The following principles guide architectural decisions in Tern:
 - Use `miette` for rich error diagnostics
 - Prefer async/await patterns with tokio
 
+## Commit Message Conventions
+
+This project uses a modified conventional commit format to enable automatic changelog generation with git-cliff.
+
+### Format
+
+**Commit Header (Subject Line):**
+- Write a clear, descriptive message explaining what the change does
+- Do NOT use conventional commit format in the header
+- Good: "Add OCI image output support for migration executables"
+- Bad: "FEAT: add oci image output"
+
+**Commit Body:**
+- Include a SINGLE LINE in conventional commit format starting with one of these prefixes:
+  - `FEATURE:` - New functionality
+  - `BUG:` - Bug fixes
+  - `BREAKING:` - Breaking changes
+  - `SECURITY:` - Security fixes
+  - `REFACTOR:` - Code refactoring
+  - `DOCS:` - Documentation changes
+  - `PERF:` - Performance improvements
+  - `TEST:` - Test changes
+  - `CI:` - Build/CI changes
+  - `CHORE:` - Miscellaneous tasks
+- If none of these categories apply, you may omit the conventional commit line
+- This line MUST be a single line only
+
+### Examples
+
+Good commit message:
+```
+Add OCI image output support for migration executables
+
+FEATURE: Add OCI image packaging format for Kubernetes deployments
+
+Implements a new output format that packages migration executables
+as OCI images, allowing users to run migrations in Kubernetes clusters
+without additional container image creation steps.
+```
+
+Good commit message for a bug fix:
+```
+Fix Rust toolchain action name in bump-tag workflow
+
+BUG: Fix incorrect action name causing CI failures
+```
+
+Good commit message for a breaking change:
+```
+Remove deprecated execute-sql command
+
+BREAKING: Remove execute-sql command, use run-migration instead
+
+The execute-sql command has been deprecated since v0.8 and is now
+removed. Users should migrate to the run-migration command.
+```
+
 ## Agent Instructions
 
 **IMPORTANT**: Before completing any task, the agent must:
