@@ -169,7 +169,8 @@ fn compile_wasi_component(
     // Find the compiled wasm file
     // The crate name with dashes becomes underscores in the binary
     let binary_name = crate_name.replace('-', "_");
-    let wasm_file = PathBuf::from("target/wasm32-wasip2/release").join(format!("{}.wasm", binary_name));
+    let wasm_file =
+        PathBuf::from("target/wasm32-wasip2/release").join(format!("{}.wasm", binary_name));
 
     if !wasm_file.exists() {
         println!(

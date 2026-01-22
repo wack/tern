@@ -1,7 +1,19 @@
-// Minimal WASI CLI standard I/O interfaces for compilation
+// Minimal WASI CLI interfaces for compilation
 // Based on WASI Preview 2 specification
 
 package wasi:cli@0.2.0;
+
+/// Environment variables and CLI arguments.
+interface environment {
+    /// Get all environment variables.
+    get-environment: func() -> list<tuple<string, string>>;
+
+    /// Get CLI arguments.
+    get-arguments: func() -> list<string>;
+
+    /// Get initial working directory.
+    initial-cwd: func() -> option<string>;
+}
 
 /// Standard input stream.
 interface stdin {
@@ -25,4 +37,10 @@ interface stderr {
 
     /// Get the standard error stream.
     get-stderr: func() -> output-stream;
+}
+
+/// The run interface for WASI CLI commands.
+interface run {
+    /// Run the CLI command and return success/failure.
+    run: func() -> result;
 }

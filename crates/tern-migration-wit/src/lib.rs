@@ -18,15 +18,21 @@
 //!
 //! # WIT Location
 //!
-//! The WIT definitions are in the `wit/` directory of this crate:
+//! The WIT definitions are in the `wit/` directory of this crate, organized
+//! by package:
 //!
 //! ```text
 //! crates/tern-migration-wit/
 //! └── wit/
-//!     ├── migration.wit       # Migration component interface definitions
-//!     ├── migration-data.wit  # Data interface for SQL statements
-//!     ├── guest.wit           # Guest component world definition
-//!     └── runner.wit          # Runner component (WASI CLI) world definition
+//!     ├── tern-migration/     # tern:migration@0.1.0 package
+//!     │   └── migration.wit   # Migration component interface definitions
+//!     ├── tern-migration-data/# tern:migration-data@0.1.0 package
+//!     │   └── migration-data.wit  # Data interface for SQL statements
+//!     ├── tern-guest/         # tern:guest@0.1.0 package
+//!     │   └── guest.wit       # Guest component world definition
+//!     ├── tern-runner/        # tern:runner@0.1.0 package
+//!     │   └── runner.wit      # Runner component (WASI CLI) world definition
+//!     └── deps/               # External dependencies (WASI interfaces)
 //! ```
 //!
 //! # Usage
@@ -87,17 +93,31 @@
 /// the WIT files.
 pub const WIT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/wit");
 
-/// The main WIT file name for migration components.
-pub const MAIN_WIT_FILE: &str = "migration.wit";
+/// The main WIT file path for migration components (relative to WIT_PATH).
+pub const MAIN_WIT_FILE: &str = "tern-migration/migration.wit";
 
-/// The WIT file name for the runner component.
-pub const RUNNER_WIT_FILE: &str = "runner.wit";
+/// The WIT file path for the runner component (relative to WIT_PATH).
+pub const RUNNER_WIT_FILE: &str = "tern-runner/runner.wit";
 
-/// The WIT file name for the guest component.
-pub const GUEST_WIT_FILE: &str = "guest.wit";
+/// The WIT file path for the guest component (relative to WIT_PATH).
+pub const GUEST_WIT_FILE: &str = "tern-guest/guest.wit";
 
-/// The WIT file name for migration data interface.
-pub const MIGRATION_DATA_WIT_FILE: &str = "migration-data.wit";
+/// The WIT file path for migration data interface (relative to WIT_PATH).
+pub const MIGRATION_DATA_WIT_FILE: &str = "tern-migration-data/migration-data.wit";
+
+/// The WIT directory path for the guest component (relative to WIT_PATH).
+/// Use this when calling wit_bindgen::generate!() for the guest.
+pub const GUEST_WIT_DIR: &str = "tern-guest";
+
+/// The WIT directory path for the runner component (relative to WIT_PATH).
+/// Use this when calling wit_bindgen::generate!() for the runner.
+pub const RUNNER_WIT_DIR: &str = "tern-runner";
+
+/// The WIT directory path for the migration component (relative to WIT_PATH).
+pub const MIGRATION_WIT_DIR: &str = "tern-migration";
+
+/// The WIT directory path for the migration-data component (relative to WIT_PATH).
+pub const MIGRATION_DATA_WIT_DIR: &str = "tern-migration-data";
 
 /// Current version of the WIT interface.
 pub const WIT_VERSION: &str = "0.1.0";

@@ -62,18 +62,18 @@ mod wasm {
 
     // Generate bindings for the runner world
     wit_bindgen::generate!({
-        path: "../tern-migration-wit/wit",
+        path: "../tern-migration-wit/wit/tern-runner",
         world: "tern-runner",
-        // Export the WASI CLI run function
-        exports: {
-            "wasi:cli/run@0.2.0": RunnerImpl,
-        },
+        generate_all,
     });
+
+    // Alias for the exported run interface
+    use exports::wasi::cli::run::Guest;
 
     /// The runner implementation.
     pub struct RunnerImpl;
 
-    impl exports::wasi::cli::run::Guest for RunnerImpl {
+    impl Guest for RunnerImpl {
         /// Main entry point for the WASI CLI.
         fn run() -> Result<(), ()> {
             // Get CLI arguments from WASI environment
@@ -200,33 +200,16 @@ mod wasm {
 
     /// Print to stdout using WASI.
     fn print_stdout(s: &str) {
-        use wasi::io::streams::StreamError;
-
         let stdout = wasi::cli::stdout::get_stdout();
-        let bytes = s.as_bytes();
-        let mut offset = 0;
-
-        while offset < bytes.len() {
-            match stdout.blocking_write_and_flush(&bytes[offset..]) {
-                Ok(()) => break,
-                Err(StreamError::Closed) => break,
-                Err(StreamError::LastOperationFailed(_)) => break,
-            }
-        }
+        // Ignore errors - best effort output
+        let _ = stdout.blocking_write_and_flush(s.as_bytes());
     }
 
     /// Print to stderr using WASI.
     fn print_stderr(s: &str) {
-        use wasi::io::streams::StreamError;
-
         let stderr = wasi::cli::stderr::get_stderr();
-        let bytes = s.as_bytes();
-
-        match stderr.blocking_write_and_flush(bytes) {
-            Ok(()) => {}
-            Err(StreamError::Closed) => {}
-            Err(StreamError::LastOperationFailed(_)) => {}
-        }
+        // Ignore errors - best effort output
+        let _ = stderr.blocking_write_and_flush(s.as_bytes());
     }
 
     // Export the component
