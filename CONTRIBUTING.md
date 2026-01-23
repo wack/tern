@@ -13,6 +13,7 @@ Bug fixes and documentation improvements generally don't require prior discussio
 ### Prerequisites
 
 - Rust toolchain (stable, edition 2024)
+- WASI target: `rustup target add wasm32-wasip2`
 - [cargo-make](https://github.com/sagiegurari/cargo-make): `cargo install cargo-make`
 - [cargo-nextest](https://nexte.st/): `cargo install cargo-nextest`
 

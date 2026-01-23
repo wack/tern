@@ -189,28 +189,48 @@ mod tests {
         use super::*;
 
         #[test]
-        fn runner_component_not_yet_available() {
-            // Until WASI rewrite, runner component is not available
-            assert!(RUNNER_COMPONENT.is_none());
-            assert!(runner_component().is_err());
+        fn runner_component_is_available() {
+            assert!(RUNNER_COMPONENT.is_some());
+            assert!(runner_component().is_ok());
         }
 
         #[test]
-        fn guest_component_not_yet_available() {
-            // Until WASI rewrite, guest component is not available
-            assert!(GUEST_COMPONENT.is_none());
-            assert!(guest_component().is_err());
+        fn guest_component_is_available() {
+            assert!(GUEST_COMPONENT.is_some());
+            assert!(guest_component().is_ok());
         }
 
         #[test]
-        fn components_not_available() {
-            assert!(!components_available());
+        fn components_are_available() {
+            assert!(components_available());
         }
 
         #[test]
-        fn component_sizes_zero_when_unavailable() {
-            assert_eq!(runner_component_size(), 0);
-            assert_eq!(guest_component_size(), 0);
+        fn component_sizes_nonzero() {
+            assert!(runner_component_size() > 0);
+            assert!(guest_component_size() > 0);
+        }
+
+        #[test]
+        fn runner_component_has_wasm_magic() {
+            let bytes = runner_component().expect("runner component should be available");
+            assert!(bytes.len() >= 4);
+            assert_eq!(
+                &bytes[0..4],
+                b"\0asm",
+                "runner should have WASM magic number"
+            );
+        }
+
+        #[test]
+        fn guest_component_has_wasm_magic() {
+            let bytes = guest_component().expect("guest component should be available");
+            assert!(bytes.len() >= 4);
+            assert_eq!(
+                &bytes[0..4],
+                b"\0asm",
+                "guest should have WASM magic number"
+            );
         }
     }
 
