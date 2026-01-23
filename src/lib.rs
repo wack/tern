@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod db;
+pub mod util;
 
 // =============================================================================
 // Macros for Reducing Code Duplication
