@@ -11,6 +11,7 @@
 ### Prerequisites
 
 - Rust toolchain (stable)
+- WASI target: `rustup target add wasm32-wasip2`
 - cargo-make: `cargo install cargo-make`
 - cargo-nextest: `cargo install cargo-nextest`
 
