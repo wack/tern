@@ -404,6 +404,79 @@ impl Migration {
 }
 
 // =============================================================================
+// CachedState
+// =============================================================================
+
+/// Current version of the cached state format.
+const CACHED_STATE_VERSION: u32 = 1;
+
+/// A wrapper around `Namespace` that includes a cached xxhash3 checksum.
+///
+/// This is used for the `state.json` file to avoid recomputing the checksum
+/// when performing drift detection. The checksum is computed once when the
+/// state is saved and stored alongside the namespace.
+///
+/// # Serialization Format
+///
+/// ```json
+/// {
+///   "version": 1,
+///   "schema_checksum": "abc123def456",
+///   "state": { ... namespace ... }
+/// }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CachedState {
+    /// Version of the cached state format.
+    /// Currently always 1. Used for future format migrations.
+    pub version: u32,
+
+    /// The xxhash3 checksum of the schema (64-bit as hex string).
+    ///
+    /// This is computed from the `Namespace` using `compute_schema_checksum()`
+    /// and cached to avoid recomputation during drift detection.
+    pub schema_checksum: String,
+
+    /// The actual schema state.
+    pub state: Namespace,
+}
+
+impl CachedState {
+    /// Creates a new cached state with a pre-computed checksum.
+    ///
+    /// # Arguments
+    ///
+    /// * `state` - The namespace to cache
+    /// * `checksum` - The pre-computed xxhash3 checksum
+    #[must_use]
+    pub fn new(state: Namespace, checksum: String) -> Self {
+        Self {
+            version: CACHED_STATE_VERSION,
+            schema_checksum: checksum,
+            state,
+        }
+    }
+
+    /// Returns the cached xxhash3 checksum.
+    #[must_use]
+    pub fn checksum(&self) -> &str {
+        &self.schema_checksum
+    }
+
+    /// Returns a reference to the namespace.
+    #[must_use]
+    pub fn namespace(&self) -> &Namespace {
+        &self.state
+    }
+
+    /// Consumes the cached state and returns the namespace.
+    #[must_use]
+    pub fn into_namespace(self) -> Namespace {
+        self.state
+    }
+}
+
+// =============================================================================
 // MigrationIndex
 // =============================================================================
 

@@ -9,7 +9,8 @@ use async_trait::async_trait;
 
 use super::StateBackend;
 use super::error::StateError;
-use super::types::{Migration, MigrationId, MigrationIndex, StateHash};
+use super::types::{CachedState, Migration, MigrationId, MigrationIndex, StateHash};
+use crate::db::checksum::compute_schema_checksum;
 use crate::db::model::Namespace;
 
 /// Default directory name for tern state.
@@ -113,6 +114,42 @@ impl LocalFileBackend {
         self.root.join(SCHEMA_FILE)
     }
 
+    /// Returns the cached xxhash3 schema checksum from state.json.
+    ///
+    /// This method reads the cached checksum directly without needing to
+    /// deserialize the full namespace, making drift detection more efficient.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the backend is not initialized or if reading
+    /// the state file fails.
+    pub fn get_cached_schema_checksum(&self) -> Result<String, StateError> {
+        if !self.is_initialized_sync() {
+            return Err(StateError::NotInitialized {
+                path: self.root.clone(),
+            });
+        }
+        self.read_cached_state().map(|c| c.schema_checksum)
+    }
+
+    /// Returns the cached state including both the namespace and its checksum.
+    ///
+    /// This is useful when you need both the state and its checksum, avoiding
+    /// the need to recompute the checksum.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the backend is not initialized or if reading
+    /// the state file fails.
+    pub fn get_cached_state(&self) -> Result<CachedState, StateError> {
+        if !self.is_initialized_sync() {
+            return Err(StateError::NotInitialized {
+                path: self.root.clone(),
+            });
+        }
+        self.read_cached_state()
+    }
+
     /// Returns the path to a migration file by sequence number.
     ///
     /// Migration files are named with 5-digit zero-padded integers:
@@ -208,8 +245,8 @@ impl LocalFileBackend {
         })
     }
 
-    /// Reads the current state from disk.
-    fn read_state(&self) -> Result<Namespace, StateError> {
+    /// Reads the current cached state from disk.
+    fn read_cached_state(&self) -> Result<CachedState, StateError> {
         let state_path = self.state_path();
 
         if !state_path.exists() {
@@ -222,10 +259,23 @@ impl LocalFileBackend {
         serde_json::from_str(&content).map_err(|source| StateError::InvalidStateJson { source })
     }
 
-    /// Writes the current state to disk.
+    /// Reads the current state from disk (returns just the Namespace).
+    fn read_state(&self) -> Result<Namespace, StateError> {
+        self.read_cached_state().map(|c| c.into_namespace())
+    }
+
+    /// Writes the current state to disk with a cached checksum.
+    ///
+    /// The checksum is computed from the namespace and stored alongside it
+    /// to avoid recomputation during drift detection.
     fn write_state(&self, state: &Namespace) -> Result<(), StateError> {
         let state_path = self.state_path();
-        let content = serde_json::to_string_pretty(state)
+
+        // Compute the xxhash3 checksum
+        let checksum = compute_schema_checksum(state);
+        let cached = CachedState::new(state.clone(), checksum);
+
+        let content = serde_json::to_string_pretty(&cached)
             .map_err(|source| StateError::SerializeState { source })?;
 
         std::fs::write(&state_path, content).map_err(|source| StateError::WriteState { source })

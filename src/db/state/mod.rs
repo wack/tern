@@ -132,7 +132,7 @@ pub use error::StateError;
 pub use exporter::{ExportConfig, SchemaExporter};
 pub use init::{InitError, init_empty, init_from_database, verify_state};
 pub use local::{DEFAULT_STATE_DIR, LocalFileBackend};
-pub use types::{Migration, MigrationId, MigrationIndex, StateHash};
+pub use types::{CachedState, Migration, MigrationId, MigrationIndex, StateHash};
 
 // Re-export InMemoryBackend for testing in other modules
 #[cfg(test)]
