@@ -13,6 +13,7 @@
 //! exists may create inconsistencies between the recorded state and the actual
 //! database schema.
 
+use anstream::println;
 use std::path::PathBuf;
 
 use miette::{Context, IntoDiagnostic, miette};

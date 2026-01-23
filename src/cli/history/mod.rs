@@ -2,6 +2,7 @@
 //!
 //! This command displays the migration history from the state backend.
 
+use anstream::println;
 use miette::IntoDiagnostic;
 use serde::Serialize;
 

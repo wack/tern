@@ -3,6 +3,7 @@
 //! This command verifies that the state backend matches the current
 //! database schema, detecting any drift from manual changes.
 
+use anstream::println;
 use miette::{Context, IntoDiagnostic};
 use serde::Serialize;
 

@@ -17,6 +17,7 @@ pub mod verify;
 
 pub use colors::EnableColors;
 
+use anstream::{eprintln, println};
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
