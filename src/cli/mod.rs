@@ -18,8 +18,6 @@ pub mod verify;
 pub use colors::EnableColors;
 
 use anstream::{eprintln, println};
-use std::path::PathBuf;
-
 use clap::{Parser, Subcommand};
 use miette::{Context, IntoDiagnostic};
 use serde::Serialize;
@@ -164,210 +162,48 @@ pub enum CliCommand {
     ///
     /// Compares the state backend to the live database and generates
     /// migration source code for the detected changes.
-    Compile {
-        /// PostgreSQL connection string
-        #[arg(long, env = "DATABASE_URL")]
-        database_url: String,
-
-        /// The database schema to compare
-        #[arg(long, default_value = "public")]
-        schema: String,
-
-        /// Output path for the generated source code
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-
-        /// Migration description
-        #[arg(long)]
-        description: String,
-
-        /// Target platform for executable (native, x86_64-linux-gnu, etc.)
-        #[arg(long, default_value = "native")]
-        target: String,
-
-        /// Record the migration to the state backend
-        #[arg(long)]
-        record: bool,
-
-        /// Preview without writing files
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Include SQL statements in output
-        #[arg(long)]
-        show_sql: bool,
-
-        /// Output format
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
-
-        /// Path to the state directory
-        #[arg(long)]
-        state_path: Option<PathBuf>,
-
-        /// Allow compilation when schema drift is detected
-        ///
-        /// By default, compile will refuse to proceed if the database schema
-        /// has drifted from the state backend (indicating manual changes).
-        /// Use this flag to explicitly acknowledge and capture the drift.
-        #[arg(long)]
-        allow_drift: bool,
-    },
+    Compile(compile::Compile),
 
     /// Build a migration executable or OCI image
     ///
     /// Compares the state backend to the live database and builds a
     /// standalone migration artifact (binary executable or OCI container image).
-    Build {
-        /// PostgreSQL connection string
-        #[arg(long, env = "DATABASE_URL")]
-        database_url: String,
-
-        /// The database schema to compare
-        #[arg(long, default_value = "public")]
-        schema: String,
-
-        /// Output path for the built artifact
-        #[arg(short, long)]
-        output: PathBuf,
-
-        /// Migration description
-        #[arg(long)]
-        description: String,
-
-        /// Target platform (native, x86_64-linux-gnu, x86_64-linux-musl, x86_64-macos, aarch64-macos, x86_64-windows)
-        #[arg(long, default_value = "native")]
-        target: String,
-
-        /// Output format: binary (standalone executable) or oci (OCI container image)
-        #[arg(long, default_value = "binary")]
-        package_format: String,
-
-        /// Record the migration to the state backend
-        #[arg(long)]
-        record: bool,
-
-        /// CLI output format
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
-
-        /// Path to the state directory
-        #[arg(long)]
-        state_path: Option<PathBuf>,
-
-        /// Allow build when schema drift is detected
-        ///
-        /// By default, build will refuse to proceed if the database schema
-        /// has drifted from the state backend (indicating manual changes).
-        /// Use this flag to explicitly acknowledge and capture the drift.
-        #[arg(long)]
-        allow_drift: bool,
-    },
+    Build(build::Build),
 
     /// List migration history
     ///
     /// Shows the ordered list of migrations in the state backend.
-    History {
-        /// Output format
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
-
-        /// Maximum number of migrations to show (from most recent)
-        #[arg(long)]
-        limit: Option<usize>,
-
-        /// Path to the state directory
-        #[arg(long)]
-        path: Option<PathBuf>,
-    },
+    History(history::History),
 
     /// Show details of a specific migration
     ///
     /// Displays detailed information about a migration, including
     /// its operations, state hashes, and breaking changes.
-    Show {
-        /// Migration ID (full hex or prefix)
-        migration_id: String,
-
-        /// Output format (text, json, or sql)
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
-
-        /// Path to the state directory
-        #[arg(long)]
-        path: Option<PathBuf>,
-    },
+    Show(show::Show),
 
     /// Record a migration as applied
     ///
     /// Marks a migration as applied in the state backend without
     /// executing it. Useful for synchronizing state backends.
-    Record {
-        /// Migration ID to record (if already in backend)
-        #[arg(long)]
-        migration_id: Option<String>,
-
-        /// Path to a migration JSON file
-        #[arg(long)]
-        migration_file: Option<PathBuf>,
-
-        /// Output format
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
-
-        /// Path to the state directory
-        #[arg(long)]
-        path: Option<PathBuf>,
-    },
+    Record(record::Record),
 
     /// Inspect a compiled migration file
     ///
     /// Examines a migration source file or JSON file and displays
     /// its contents and metadata.
-    Inspect {
-        /// Path to the file to inspect (.json or .rs)
-        path: PathBuf,
-
-        /// Output format (text, json, or sql)
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
-    },
+    Inspect(inspect::Inspect),
 
     /// Verify state backend matches database
     ///
     /// Compares the state backend to the live database schema and
     /// reports any drift (manual changes not captured in migrations).
-    Verify {
-        /// PostgreSQL connection string
-        #[arg(long, env = "DATABASE_URL")]
-        database_url: String,
-
-        /// The database schema to verify
-        #[arg(long, default_value = "public")]
-        schema: String,
-
-        /// Output format
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
-
-        /// Path to the state directory
-        #[arg(long)]
-        path: Option<PathBuf>,
-    },
+    Verify(verify::Verify),
 
     /// Verify migration chain integrity
     ///
     /// Checks that all migrations in the state backend have valid
     /// parent-child relationships (chain integrity).
-    VerifyChain {
-        /// Output format
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
-
-        /// Path to the state directory
-        #[arg(long)]
-        path: Option<PathBuf>,
-    },
+    VerifyChain(verify::VerifyChain),
 
     /// Schema management commands
     ///
@@ -389,71 +225,21 @@ pub enum SchemaAction {
     /// would recreate the current schema from scratch. This file is
     /// useful for viewing the schema, documentation, and the model-first
     /// migration workflow.
-    Export {
-        /// Output path for the schema file (default: .tern/schema.sql, use "-" for stdout)
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-
-        /// Output format (text shows summary, sql shows DDL, json includes metadata)
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
-
-        /// Path to the state directory
-        #[arg(long)]
-        path: Option<PathBuf>,
-    },
+    Export(schema::export::Export),
 
     /// Show diff between current state and edited schema.sql
     ///
     /// Compares the current migration state to the edited schema.sql file
     /// and displays what operations would be needed to transform the schema.
     /// This is the preview step before generating a migration.
-    #[cfg(feature = "pglite")]
-    Diff {
-        /// Path to the edited schema file (default: .tern/schema.sql)
-        #[arg(short, long)]
-        schema: Option<PathBuf>,
-
-        /// Output format (text shows summary, sql shows migration SQL, json includes metadata)
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
-
-        /// Path to the state directory
-        #[arg(long)]
-        path: Option<PathBuf>,
-    },
+    Diff(schema::diff::Diff),
 
     /// Generate migration from schema changes
     ///
     /// Compares the current migration state to the edited schema.sql file
     /// and generates a migration that would transform the schema. This is
     /// the core of the model-first migration workflow.
-    #[cfg(feature = "pglite")]
-    Migrate {
-        /// Path to the edited schema file (default: .tern/schema.sql)
-        #[arg(short, long)]
-        schema: Option<PathBuf>,
-
-        /// Migration description
-        #[arg(short, long)]
-        description: String,
-
-        /// Output format (text shows summary, sql shows migration SQL, json includes metadata)
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
-
-        /// Path to the state directory
-        #[arg(long)]
-        path: Option<PathBuf>,
-
-        /// Preview without recording the migration
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Skip confirmation prompt for destructive changes
-        #[arg(long)]
-        force: bool,
-    },
+    Migrate(schema::migrate::Migrate),
 }
 
 impl CliCommand {
@@ -471,93 +257,64 @@ impl CliCommand {
                 init::run_init(args.from, &args.schema, args.path.as_deref()).await
             }
             CliCommand::Status(args) => status::run_status(args.format, args.path.as_deref()).await,
-            CliCommand::Compile {
-                database_url,
-                schema,
-                output,
-                description,
-                target,
-                record,
-                dry_run,
-                show_sql,
-                format,
-                state_path,
-                allow_drift,
-            } => {
+            CliCommand::Compile(args) => {
                 compile::run_compile(
-                    &database_url,
-                    &schema,
-                    output,
-                    &description,
-                    &target,
-                    record,
-                    dry_run,
-                    show_sql,
-                    format,
-                    state_path.as_deref(),
-                    allow_drift,
+                    &args.database_url,
+                    &args.schema,
+                    args.output,
+                    &args.description,
+                    &args.target,
+                    args.record,
+                    args.dry_run,
+                    args.show_sql,
+                    args.format,
+                    args.state_path.as_deref(),
+                    args.allow_drift,
                 )
                 .await
             }
-            CliCommand::Build {
-                database_url,
-                schema,
-                output,
-                description,
-                target,
-                package_format,
-                record,
-                format,
-                state_path,
-                allow_drift,
-            } => {
+            CliCommand::Build(args) => {
                 build::run_build(
-                    &database_url,
-                    &schema,
-                    output,
-                    &description,
-                    &target,
-                    &package_format,
-                    record,
-                    format,
-                    state_path.as_deref(),
-                    allow_drift,
+                    &args.database_url,
+                    &args.schema,
+                    args.output,
+                    &args.description,
+                    &args.target,
+                    &args.package_format,
+                    args.record,
+                    args.format,
+                    args.state_path.as_deref(),
+                    args.allow_drift,
                 )
                 .await
             }
-            CliCommand::History {
-                format,
-                limit,
-                path,
-            } => history::run_history(format, limit, path.as_deref()).await,
-            CliCommand::Show {
-                migration_id,
-                format,
-                path,
-            } => show::run_show(&migration_id, format, path.as_deref()).await,
-            CliCommand::Record {
-                migration_id,
-                migration_file,
-                format,
-                path,
-            } => {
+            CliCommand::History(args) => {
+                history::run_history(args.format, args.limit, args.path.as_deref()).await
+            }
+            CliCommand::Show(args) => {
+                show::run_show(&args.migration_id, args.format, args.path.as_deref()).await
+            }
+            CliCommand::Record(args) => {
                 record::run_record(
-                    migration_id.as_deref(),
-                    migration_file,
-                    format,
-                    path.as_deref(),
+                    args.migration_id.as_deref(),
+                    args.migration_file,
+                    args.format,
+                    args.path.as_deref(),
                 )
                 .await
             }
-            CliCommand::Inspect { path, format } => inspect::run_inspect(path, format).await,
-            CliCommand::Verify {
-                database_url,
-                schema,
-                format,
-                path,
-            } => verify::run_verify(&database_url, &schema, format, path.as_deref()).await,
-            CliCommand::VerifyChain { format, path } => {
-                verify::run_verify_chain(format, path.as_deref()).await
+            CliCommand::Inspect(args) => inspect::run_inspect(args.path, args.format).await,
+            CliCommand::Verify(args) => {
+                verify::run_verify(
+                    &args.database_url,
+                    &args.schema,
+                    args.format,
+                    args.path.as_deref(),
+                )
+                .await
+            }
+            CliCommand::VerifyChain(args) => {
+                verify::run_verify_chain(args.format, args.path.as_deref()).await
             }
             CliCommand::Schema(action) => action.dispatch().await,
         }
@@ -568,33 +325,20 @@ impl SchemaAction {
     /// Dispatch schema subcommands.
     pub async fn dispatch(self) -> miette::Result<()> {
         match self {
-            SchemaAction::Export {
-                output,
-                format,
-                path,
-            } => schema::run_schema_export(output, path.as_deref(), format).await,
-            #[cfg(feature = "pglite")]
-            SchemaAction::Diff {
-                schema,
-                format,
-                path,
-            } => schema::run_schema_diff(schema, path.as_deref(), format).await,
-            #[cfg(feature = "pglite")]
-            SchemaAction::Migrate {
-                schema,
-                description,
-                format,
-                path,
-                dry_run,
-                force,
-            } => {
+            SchemaAction::Export(args) => {
+                schema::run_schema_export(args.output, args.path.as_deref(), args.format).await
+            }
+            SchemaAction::Diff(args) => {
+                schema::run_schema_diff(args.schema, args.path.as_deref(), args.format).await
+            }
+            SchemaAction::Migrate(args) => {
                 schema::run_schema_migrate(
-                    schema,
-                    &description,
-                    path.as_deref(),
-                    format,
-                    dry_run,
-                    force,
+                    args.schema,
+                    &args.description,
+                    args.path.as_deref(),
+                    args.format,
+                    args.dry_run,
+                    args.force,
                 )
                 .await
             }

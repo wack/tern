@@ -3,9 +3,10 @@
 //! This command compiles a migration by comparing the current state backend
 //! to the live database and generating migration SQL.
 
-use anstream::println;
 use std::path::PathBuf;
 
+use anstream::println;
+use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use serde::Serialize;
 
@@ -14,6 +15,61 @@ use crate::db::compile::{CompileOptions, Target, compile_migration};
 use crate::db::query::PostgresCatalog;
 use crate::db::state::{StateBackend, StateHash};
 use crate::db::{self};
+
+/// Compile a migration to source code
+///
+/// Compares the state backend to the live database and generates
+/// migration source code for the detected changes.
+#[derive(Debug, Clone, Args)]
+pub struct Compile {
+    /// PostgreSQL connection string
+    #[arg(long, env = "DATABASE_URL")]
+    pub database_url: String,
+
+    /// The database schema to compare
+    #[arg(long, default_value = "public")]
+    pub schema: String,
+
+    /// Output path for the generated source code
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
+
+    /// Migration description
+    #[arg(long)]
+    pub description: String,
+
+    /// Target platform for executable (native, x86_64-linux-gnu, etc.)
+    #[arg(long, default_value = "native")]
+    pub target: String,
+
+    /// Record the migration to the state backend
+    #[arg(long)]
+    pub record: bool,
+
+    /// Preview without writing files
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Include SQL statements in output
+    #[arg(long)]
+    pub show_sql: bool,
+
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+
+    /// Path to the state directory
+    #[arg(long)]
+    pub state_path: Option<PathBuf>,
+
+    /// Allow compilation when schema drift is detected
+    ///
+    /// By default, compile will refuse to proceed if the database schema
+    /// has drifted from the state backend (indicating manual changes).
+    /// Use this flag to explicitly acknowledge and capture the drift.
+    #[arg(long)]
+    pub allow_drift: bool,
+}
 
 /// Compile output for JSON format.
 #[derive(Debug, Clone, Serialize)]

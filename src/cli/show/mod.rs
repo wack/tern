@@ -2,13 +2,34 @@
 //!
 //! This command displays detailed information about a specific migration.
 
+use std::path::PathBuf;
+
 use anstream::println;
+use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use serde::Serialize;
 
 use super::{OutputFormat, ensure_backend_initialized, load_backend, print_json};
 use crate::db::migrate::{MigrationPlan, PostgresRenderer, RenderConfig};
 use crate::db::state::{LocalFileBackend, MigrationId, StateBackend};
+
+/// Show details of a specific migration
+///
+/// Displays detailed information about a migration, including
+/// its operations, state hashes, and breaking changes.
+#[derive(Debug, Clone, Args)]
+pub struct Show {
+    /// Migration ID (full hex or prefix)
+    pub migration_id: String,
+
+    /// Output format (text, json, or sql)
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+
+    /// Path to the state directory
+    #[arg(long)]
+    pub path: Option<PathBuf>,
+}
 
 /// Show output for JSON format.
 #[derive(Debug, Clone, Serialize)]

@@ -3,9 +3,10 @@
 //! This command builds a migration executable or OCI image from the compiled
 //! migration state.
 
-use anstream::println;
 use std::path::PathBuf;
 
+use anstream::println;
+use clap::Args;
 use jiff::Zoned;
 use miette::{Context, IntoDiagnostic, miette};
 use serde::Serialize;
@@ -18,6 +19,57 @@ use crate::db::compile::{
 use crate::db::query::PostgresCatalog;
 use crate::db::state::{StateBackend, StateHash};
 use crate::db::{self};
+
+/// Build a migration executable or OCI image
+///
+/// Compares the state backend to the live database and builds a
+/// standalone migration artifact (binary executable or OCI container image).
+#[derive(Debug, Clone, Args)]
+pub struct Build {
+    /// PostgreSQL connection string
+    #[arg(long, env = "DATABASE_URL")]
+    pub database_url: String,
+
+    /// The database schema to compare
+    #[arg(long, default_value = "public")]
+    pub schema: String,
+
+    /// Output path for the built artifact
+    #[arg(short, long)]
+    pub output: PathBuf,
+
+    /// Migration description
+    #[arg(long)]
+    pub description: String,
+
+    /// Target platform (native, x86_64-linux-gnu, x86_64-linux-musl, x86_64-macos, aarch64-macos, x86_64-windows)
+    #[arg(long, default_value = "native")]
+    pub target: String,
+
+    /// Output format: binary (standalone executable) or oci (OCI container image)
+    #[arg(long, default_value = "binary")]
+    pub package_format: String,
+
+    /// Record the migration to the state backend
+    #[arg(long)]
+    pub record: bool,
+
+    /// CLI output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+
+    /// Path to the state directory
+    #[arg(long)]
+    pub state_path: Option<PathBuf>,
+
+    /// Allow build when schema drift is detected
+    ///
+    /// By default, build will refuse to proceed if the database schema
+    /// has drifted from the state backend (indicating manual changes).
+    /// Use this flag to explicitly acknowledge and capture the drift.
+    #[arg(long)]
+    pub allow_drift: bool,
+}
 
 /// Build output for JSON format.
 #[derive(Debug, Clone, Serialize)]

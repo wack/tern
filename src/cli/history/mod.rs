@@ -2,12 +2,33 @@
 //!
 //! This command displays the migration history from the state backend.
 
+use std::path::PathBuf;
+
 use anstream::println;
+use clap::Args;
 use miette::IntoDiagnostic;
 use serde::Serialize;
 
 use super::{OutputFormat, ensure_backend_initialized, load_backend, print_json};
 use crate::db::state::StateBackend;
+
+/// List migration history
+///
+/// Shows the ordered list of migrations in the state backend.
+#[derive(Debug, Clone, Args)]
+pub struct History {
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+
+    /// Maximum number of migrations to show (from most recent)
+    #[arg(long)]
+    pub limit: Option<usize>,
+
+    /// Path to the state directory
+    #[arg(long)]
+    pub path: Option<PathBuf>,
+}
 
 /// History output for JSON format.
 #[derive(Debug, Clone, Serialize)]

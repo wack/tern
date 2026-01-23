@@ -3,14 +3,29 @@
 //! This command inspects migration source files or JSON migration files
 //! to display their contents and metadata.
 
-use anstream::println;
 use std::path::PathBuf;
 
+use anstream::println;
+use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use serde::Serialize;
 
 use super::{OutputFormat, print_json};
 use crate::db::state::Migration;
+
+/// Inspect a compiled migration file
+///
+/// Examines a migration source file or JSON file and displays
+/// its contents and metadata.
+#[derive(Debug, Clone, Args)]
+pub struct Inspect {
+    /// Path to the file to inspect (.json or .rs)
+    pub path: PathBuf,
+
+    /// Output format (text, json, or sql)
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+}
 
 /// Inspect output for JSON format.
 #[derive(Debug, Clone, Serialize)]
