@@ -1,3 +1,4 @@
+pub mod checksum;
 pub mod compile;
 pub mod diff;
 pub mod history;
