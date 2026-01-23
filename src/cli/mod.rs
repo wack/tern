@@ -152,19 +152,7 @@ pub enum CliCommand {
     ///
     /// Creates the .tern/ directory structure and optionally captures
     /// the current database schema as the baseline migration.
-    Init {
-        /// PostgreSQL connection string to initialize from (captures current schema)
-        #[arg(long, env = "DATABASE_URL")]
-        from: Option<String>,
-
-        /// The database schema to capture
-        #[arg(long, default_value = "public")]
-        schema: String,
-
-        /// Path to create the state directory (default: current directory)
-        #[arg(long)]
-        path: Option<PathBuf>,
-    },
+    Init(init::Init),
 
     /// Show state backend status
     ///
@@ -487,8 +475,8 @@ impl CliCommand {
                 database_url,
                 schema,
             } => print_migrations(&database_url, &schema).await,
-            CliCommand::Init { from, schema, path } => {
-                init::run_init(from, &schema, path.as_deref()).await
+            CliCommand::Init(args) => {
+                init::run_init(args.from, &args.schema, args.path.as_deref()).await
             }
             CliCommand::Status { format, path } => {
                 status::run_status(format, path.as_deref()).await

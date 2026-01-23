@@ -3,12 +3,34 @@
 //! This command initializes a new Tern project with state backend, either
 //! from an existing database or with an empty schema.
 
+use std::path::PathBuf;
+
 use anstream::println;
+use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 
 use crate::db::query::PostgresCatalog;
 use crate::db::state::{LocalFileBackend, StateBackend, init_empty, init_from_database};
 use crate::db::{self};
+
+/// Initialize a new Tern project with state backend
+///
+/// Creates the .tern/ directory structure and optionally captures
+/// the current database schema as the baseline migration.
+#[derive(Debug, Clone, Args)]
+pub struct Init {
+    /// PostgreSQL connection string to initialize from (captures current schema)
+    #[arg(long, env = "DATABASE_URL")]
+    pub from: Option<String>,
+
+    /// The database schema to capture
+    #[arg(long, default_value = "public")]
+    pub schema: String,
+
+    /// Path to create the state directory (default: current directory)
+    #[arg(long)]
+    pub path: Option<PathBuf>,
+}
 
 /// Runs the init command.
 ///
