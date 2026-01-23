@@ -136,70 +136,60 @@ fn format_timestamp(ts: &str) -> String {
     }
 }
 
-/// Runs the history command.
-///
-/// Lists the migration history from the state backend.
-///
-/// # Arguments
-///
-/// * `format` - Output format (text or json)
-/// * `limit` - Maximum number of migrations to display
-/// * `state_path` - Optional path to the state directory
-pub async fn run_history(
-    format: OutputFormat,
-    limit: Option<usize>,
-    state_path: Option<&std::path::Path>,
-) -> miette::Result<()> {
-    // Load the state backend
-    let backend = load_backend(state_path);
-    ensure_backend_initialized(&backend).await?;
+impl History {
+    /// Dispatch the history command.
+    pub async fn dispatch(self) -> miette::Result<()> {
+        // Load the state backend
+        let backend = load_backend(self.path.as_deref());
+        ensure_backend_initialized(&backend).await?;
 
-    // Get all migrations
-    let all_migrations = backend.get_all_migrations().await.into_diagnostic()?;
+        // Get all migrations
+        let all_migrations = backend.get_all_migrations().await.into_diagnostic()?;
 
-    let total = all_migrations.len();
+        let total = all_migrations.len();
 
-    // Apply limit if specified
-    let migrations_to_show = match limit {
-        Some(n) => &all_migrations[all_migrations.len().saturating_sub(n)..],
-        None => &all_migrations[..],
-    };
+        // Apply limit if specified
+        let migrations_to_show = match self.limit {
+            Some(n) => &all_migrations[all_migrations.len().saturating_sub(n)..],
+            None => &all_migrations[..],
+        };
 
-    // Build output entries
-    let migrations: Vec<MigrationEntry> = migrations_to_show
-        .iter()
-        .enumerate()
-        .map(|(idx, m)| {
-            let number = match limit {
-                Some(n) => total.saturating_sub(n) + idx + 1,
-                None => idx + 1,
-            };
-            MigrationEntry {
-                number,
-                id: m.id.to_short_hex(),
-                full_id: m.id.to_hex(),
-                description: m.description.clone(),
-                created_at: m.created_at.to_string(),
-                operation_count: m.operation_count(),
-                has_breaking_changes: m.has_breaking_changes(),
-                is_baseline: m.is_baseline(),
-                is_checkpoint: m.is_checkpoint(),
-            }
-        })
-        .collect();
+        // Build output entries
+        let migrations: Vec<MigrationEntry> = migrations_to_show
+            .iter()
+            .enumerate()
+            .map(|(idx, m)| {
+                let number = match self.limit {
+                    Some(n) => total.saturating_sub(n) + idx + 1,
+                    None => idx + 1,
+                };
+                MigrationEntry {
+                    number,
+                    id: m.id.to_short_hex(),
+                    full_id: m.id.to_hex(),
+                    description: m.description.clone(),
+                    created_at: m.created_at.to_string(),
+                    operation_count: m.operation_count(),
+                    has_breaking_changes: m.has_breaking_changes(),
+                    is_baseline: m.is_baseline(),
+                    is_checkpoint: m.is_checkpoint(),
+                }
+            })
+            .collect();
 
-    let output = HistoryOutput {
-        total,
-        displayed: migrations.len(),
-        migrations,
-    };
+        let output = HistoryOutput {
+            total,
+            displayed: migrations.len(),
+            migrations,
+        };
 
-    match format {
-        OutputFormat::Text | OutputFormat::Sql => println!("{}", output),
-        OutputFormat::Json => print_json(&output),
+        match self.format {
+            OutputFormat::Text | OutputFormat::Sql => println!("{}", output),
+            OutputFormat::Json => print_json(&output),
+        }
+
+        Ok(())
     }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -218,9 +208,12 @@ mod tests {
         init_empty(&backend, "public").await.unwrap();
 
         // History should show the baseline
-        run_history(OutputFormat::Text, None, Some(temp_dir.path()))
-            .await
-            .unwrap();
+        let history = History {
+            format: OutputFormat::Text,
+            limit: None,
+            path: Some(temp_dir.path().to_path_buf()),
+        };
+        history.dispatch().await.unwrap();
     }
 
     #[tokio::test]
@@ -244,9 +237,12 @@ mod tests {
         backend.save_migration(&m).await.unwrap();
 
         // History should show both
-        run_history(OutputFormat::Text, None, Some(temp_dir.path()))
-            .await
-            .unwrap();
+        let history = History {
+            format: OutputFormat::Text,
+            limit: None,
+            path: Some(temp_dir.path().to_path_buf()),
+        };
+        history.dispatch().await.unwrap();
     }
 
     #[test]

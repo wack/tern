@@ -8,6 +8,8 @@
 // in the generated Display implementations via the #[error("...")] attribute.
 #![allow(unused_assignments)]
 
+use crate::db::diff::diff_namespaces;
+use crate::db::migrate::MigrationPlan;
 use crate::db::model::Namespace;
 use crate::db::query::{Catalog, QueryError, load_namespace};
 
@@ -48,8 +50,12 @@ pub enum InitError {
 /// This function:
 /// 1. Introspects the current database schema
 /// 2. Initializes the state backend (creates directories, etc.)
-/// 3. Creates a baseline migration capturing the current state
+/// 3. Creates a baseline migration with full DDL operations
 /// 4. Saves the baseline and current state to the backend
+///
+/// The baseline migration includes operations that would recreate the
+/// schema from scratch. This allows existing database schemas to be imported
+/// into Tern's migration history.
 ///
 /// # Arguments
 ///
@@ -107,8 +113,13 @@ where
     // Initialize the backend
     backend.initialize().await?;
 
-    // Create and save baseline migration
-    let baseline = Migration::baseline(namespace.clone());
+    // Generate operations by diffing empty -> current state
+    let empty = Namespace::empty(schema_name);
+    let diff = diff_namespaces(&empty, &namespace);
+    let plan = MigrationPlan::from_diff(&diff);
+
+    // Create and save baseline migration with operations
+    let baseline = Migration::baseline_with_operations(namespace.clone(), plan.operations);
     backend.save_migration(&baseline).await?;
 
     // Save current state
@@ -292,8 +303,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(baseline.is_baseline());
+        // Baseline still has parent_state_hash of zero
+        assert!(baseline.parent_state_hash.is_zero());
         assert!(baseline.is_checkpoint());
+
+        // NEW: Baseline now has operations to create the schema from scratch
+        assert!(!baseline.operations.is_empty());
+        // Should have at least one operation to create the table
+        assert!(baseline.operation_count() >= 1);
 
         // Verify the checkpoint state contains the table
         let checkpoint_state = baseline.checkpoint_state.as_ref().unwrap();

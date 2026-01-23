@@ -117,85 +117,77 @@ impl std::fmt::Display for StatusOutput {
     }
 }
 
-/// Runs the status command.
-///
-/// Displays the current state of the migration backend.
-///
-/// # Arguments
-///
-/// * `format` - Output format (text or json)
-/// * `path` - Optional path to the state directory
-pub async fn run_status(
-    format: OutputFormat,
-    path: Option<&std::path::Path>,
-) -> miette::Result<()> {
-    // Determine backend location
-    let backend = match path {
-        Some(p) => LocalFileBackend::at_path(p),
-        None => LocalFileBackend::default_location(),
-    };
+impl Status {
+    /// Dispatch the status command.
+    pub async fn dispatch(self) -> miette::Result<()> {
+        // Determine backend location
+        let backend = match self.path.as_deref() {
+            Some(p) => LocalFileBackend::at_path(p),
+            None => LocalFileBackend::default_location(),
+        };
 
-    // Check if initialized
-    let initialized = backend.is_initialized().await.into_diagnostic()?;
+        // Check if initialized
+        let initialized = backend.is_initialized().await.into_diagnostic()?;
 
-    if !initialized {
-        return Err(miette!(
-            "State backend not initialized at {}\n\nRun 'tern init' to initialize a new project.",
-            backend.root().display()
-        ));
-    }
+        if !initialized {
+            return Err(miette!(
+                "State backend not initialized at {}\n\nRun 'tern init' to initialize a new project.",
+                backend.root().display()
+            ));
+        }
 
-    // Get migration index
-    let index = backend.get_migration_index().await.into_diagnostic()?;
+        // Get migration index
+        let index = backend.get_migration_index().await.into_diagnostic()?;
 
-    // Get current state hash
-    let state_hash = backend.get_current_state_hash().await.into_diagnostic()?;
+        // Get current state hash
+        let state_hash = backend.get_current_state_hash().await.into_diagnostic()?;
 
-    // Get last migration info if there are migrations
-    let last_migration = if !index.is_empty() {
-        let last_id = index.last().unwrap();
-        let migration = backend.get_migration(last_id).await.into_diagnostic()?;
-        Some(LastMigrationInfo {
-            id: migration.id.to_short_hex(),
-            description: migration.description.clone(),
-            created_at: migration.created_at.to_string(),
-            has_breaking_changes: migration.has_breaking_changes(),
-        })
-    } else {
-        None
-    };
-
-    // Get schema summary if state exists
-    let schema_summary = match backend.get_current_state().await {
-        Ok(state) => Some(SchemaSummary {
-            name: state.name.to_string(),
-            table_count: state.tables.len(),
-            view_count: state.views.len(),
-            enum_count: state.enums.len(),
-            sequence_count: state.sequences.len(),
-        }),
-        Err(_) => None,
-    };
-
-    let output = StatusOutput {
-        initialized,
-        state_directory: backend.root().display().to_string(),
-        migration_count: index.len(),
-        current_state_hash: if state_hash.is_zero() {
-            "(empty)".to_string()
+        // Get last migration info if there are migrations
+        let last_migration = if !index.is_empty() {
+            let last_id = index.last().unwrap();
+            let migration = backend.get_migration(last_id).await.into_diagnostic()?;
+            Some(LastMigrationInfo {
+                id: migration.id.to_short_hex(),
+                description: migration.description.clone(),
+                created_at: migration.created_at.to_string(),
+                has_breaking_changes: migration.has_breaking_changes(),
+            })
         } else {
-            state_hash.to_short_hex()
-        },
-        last_migration,
-        schema_summary,
-    };
+            None
+        };
 
-    match format {
-        OutputFormat::Text | OutputFormat::Sql => println!("{}", output),
-        OutputFormat::Json => print_json(&output),
+        // Get schema summary if state exists
+        let schema_summary = match backend.get_current_state().await {
+            Ok(state) => Some(SchemaSummary {
+                name: state.name.to_string(),
+                table_count: state.tables.len(),
+                view_count: state.views.len(),
+                enum_count: state.enums.len(),
+                sequence_count: state.sequences.len(),
+            }),
+            Err(_) => None,
+        };
+
+        let output = StatusOutput {
+            initialized,
+            state_directory: backend.root().display().to_string(),
+            migration_count: index.len(),
+            current_state_hash: if state_hash.is_zero() {
+                "(empty)".to_string()
+            } else {
+                state_hash.to_short_hex()
+            },
+            last_migration,
+            schema_summary,
+        };
+
+        match self.format {
+            OutputFormat::Text | OutputFormat::Sql => println!("{}", output),
+            OutputFormat::Json => print_json(&output),
+        }
+
+        Ok(())
     }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -208,7 +200,11 @@ mod tests {
     async fn status_fails_if_not_initialized() {
         let temp_dir = TempDir::new().unwrap();
 
-        let result = run_status(OutputFormat::Text, Some(temp_dir.path())).await;
+        let status = Status {
+            format: OutputFormat::Text,
+            path: Some(temp_dir.path().to_path_buf()),
+        };
+        let result = status.dispatch().await;
         assert!(result.is_err());
     }
 
@@ -221,9 +217,11 @@ mod tests {
         init_empty(&backend, "public").await.unwrap();
 
         // Status should succeed
-        run_status(OutputFormat::Text, Some(temp_dir.path()))
-            .await
-            .unwrap();
+        let status = Status {
+            format: OutputFormat::Text,
+            path: Some(temp_dir.path().to_path_buf()),
+        };
+        status.dispatch().await.unwrap();
     }
 
     #[test]

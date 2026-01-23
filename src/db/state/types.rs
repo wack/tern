@@ -367,6 +367,34 @@ impl Migration {
         }
     }
 
+    /// Creates a baseline migration with full DDL operations.
+    ///
+    /// Unlike `baseline()`, this method includes operations that would
+    /// recreate the schema from scratch. This allows the migration to be
+    /// applied to a fresh database in dev/CI environments.
+    ///
+    /// # Arguments
+    ///
+    /// * `namespace` - The target schema state
+    /// * `operations` - Operations to create the schema from empty
+    #[must_use]
+    pub fn baseline_with_operations(namespace: Namespace, operations: Vec<Operation>) -> Self {
+        let description = "Baseline migration from existing database".to_string();
+        let id = MigrationId::from_content(&operations, &StateHash::zero(), &description);
+        let resulting_hash = StateHash::from_namespace(&namespace);
+
+        Self {
+            id,
+            description,
+            created_at: Timestamp::now(),
+            operations,
+            parent_state_hash: StateHash::zero(),
+            resulting_state_hash: resulting_hash,
+            breaking_changes: vec![],
+            checkpoint_state: Some(namespace),
+        }
+    }
+
     /// Creates a checkpoint migration that includes the full schema state.
     ///
     /// Checkpoint migrations enable fast state reconstruction by storing

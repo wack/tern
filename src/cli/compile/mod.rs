@@ -71,6 +71,168 @@ pub struct Compile {
     pub allow_drift: bool,
 }
 
+impl Compile {
+    /// Dispatch the compile command.
+    pub async fn dispatch(self) -> miette::Result<()> {
+        anstream::eprintln!(
+            "WARNING: 'compile' is deprecated. Use 'tern import' + 'tern build' instead."
+        );
+
+        // Parse target
+        let target = Target::from_str_name(&self.target).ok_or_else(|| {
+            miette!(
+                "Invalid target: '{}'. Valid targets: native, x86_64-linux-gnu, x86_64-linux-musl, x86_64-macos, aarch64-macos, x86_64-windows",
+                self.target
+            )
+        })?;
+
+        // Load the state backend
+        let backend = load_backend(self.state_path.as_deref());
+        ensure_backend_initialized(&backend).await?;
+
+        // Get current state from backend
+        let source_state = backend
+            .get_current_state()
+            .await
+            .into_diagnostic()
+            .wrap_err("Failed to load current state from backend")?;
+
+        // Connect to database and load target state
+        if !self.dry_run {
+            println!("Connecting to database...");
+        }
+
+        let client = db::connect(&self.database_url)
+            .await
+            .into_diagnostic()
+            .wrap_err("Failed to connect to database")?;
+
+        let catalog = PostgresCatalog::new(&client);
+
+        if !self.dry_run {
+            println!("Loading schema '{}'...", self.schema);
+        }
+
+        let target_state = crate::db::query::load_namespace(&catalog, &self.schema)
+            .await
+            .into_diagnostic()
+            .wrap_err_with(|| format!("Failed to load schema '{}'", self.schema))?;
+
+        // Check for schema drift before compiling
+        let source_hash = StateHash::from_namespace(&source_state);
+        let target_hash = StateHash::from_namespace(&target_state);
+
+        if source_hash != target_hash && !self.allow_drift {
+            // Schema drift detected - warn the user
+            let drift_summary = compute_drift_summary(&source_state, &target_state);
+
+            return Err(miette!(
+                help = "Run 'tern verify' to see detailed drift information.\n\
+                        To proceed anyway, use --allow-drift to explicitly capture the drift.",
+                "Schema drift detected between state backend and database.\n\n\
+                 The database has been modified outside of Tern migrations.\n\n\
+                 {}\n\n\
+                 Compiling now would capture these untracked changes as part of your migration.",
+                drift_summary
+            ));
+        }
+
+        if source_hash != target_hash && self.allow_drift && !self.dry_run {
+            println!("WARNING: Schema drift detected. Proceeding with --allow-drift.");
+        }
+
+        // Compile the migration
+        if !self.dry_run {
+            println!("Compiling migration...");
+        }
+
+        let options = CompileOptions::new(&self.description).with_target(target);
+        let result = compile_migration(&source_state, &target_state, options).into_diagnostic()?;
+
+        // Build output
+        let statements = if self.show_sql {
+            Some(
+                result
+                    .compilation
+                    .statements
+                    .iter()
+                    .map(|s| StatementOutput {
+                        description: s.description.clone(),
+                        sql: s.sql.clone(),
+                    })
+                    .collect(),
+            )
+        } else {
+            None
+        };
+
+        let breaking_changes: Vec<BreakingChangeOutput> = result
+            .compilation
+            .breaking_changes
+            .iter()
+            .map(|bc| BreakingChangeOutput {
+                description: bc.description.clone(),
+                mitigation: format!("{:?}", bc.mitigation),
+            })
+            .collect();
+
+        let compile_output = CompileOutput {
+            migration_id: result.migration_id(),
+            description: self.description.clone(),
+            statement_count: result.statement_count(),
+            has_breaking_changes: result.has_breaking_changes(),
+            has_destructive_changes: result.has_destructive_changes(),
+            source_state_hash: result.source_hash.to_hex(),
+            target_state_hash: result.target_hash.to_hex(),
+            output_path: self.output.as_ref().map(|p| p.display().to_string()),
+            statements,
+            breaking_changes,
+        };
+
+        // Write output if requested
+        if let Some(ref output_path) = self.output
+            && !self.dry_run
+        {
+            // Create parent directories if needed
+            if let Some(parent) = output_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .into_diagnostic()
+                    .wrap_err("Failed to create output directory")?;
+            }
+
+            // Write the source code
+            std::fs::write(output_path, result.source_code())
+                .into_diagnostic()
+                .wrap_err("Failed to write output file")?;
+        }
+
+        // Record migration if requested
+        if self.record && !self.dry_run {
+            backend
+                .record_migration(&result.migration, &target_state)
+                .await
+                .into_diagnostic()
+                .wrap_err("Failed to record migration")?;
+
+            println!("Migration recorded to state backend.");
+        }
+
+        // Output results
+        match self.format {
+            OutputFormat::Text => println!("{}", compile_output),
+            OutputFormat::Json => print_json(&compile_output),
+            OutputFormat::Sql => {
+                for stmt in &result.compilation.statements {
+                    println!("{};", stmt.sql);
+                    println!();
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 /// Compile output for JSON format.
 #[derive(Debug, Clone, Serialize)]
 pub struct CompileOutput {
@@ -143,191 +305,6 @@ impl std::fmt::Display for CompileOutput {
 
         Ok(())
     }
-}
-
-/// Runs the compile command.
-///
-/// Compiles a migration by comparing the current state to the live database.
-///
-/// # Arguments
-///
-/// * `database_url` - PostgreSQL connection string
-/// * `schema` - Database schema name
-/// * `output` - Optional output path for source code
-/// * `description` - Migration description
-/// * `target` - Target platform for compilation
-/// * `record` - Whether to record the migration to the state backend
-/// * `dry_run` - Preview without writing
-/// * `show_sql` - Include SQL statements in output
-/// * `format` - Output format
-/// * `state_path` - Optional path to the state directory
-/// * `allow_drift` - Whether to allow compilation when drift is detected
-#[allow(clippy::too_many_arguments)]
-pub async fn run_compile(
-    database_url: &str,
-    schema: &str,
-    output: Option<PathBuf>,
-    description: &str,
-    target: &str,
-    record: bool,
-    dry_run: bool,
-    show_sql: bool,
-    format: OutputFormat,
-    state_path: Option<&std::path::Path>,
-    allow_drift: bool,
-) -> miette::Result<()> {
-    // Parse target
-    let target = Target::from_str_name(target).ok_or_else(|| {
-        miette!(
-            "Invalid target: '{}'. Valid targets: native, x86_64-linux-gnu, x86_64-linux-musl, x86_64-macos, aarch64-macos, x86_64-windows",
-            target
-        )
-    })?;
-
-    // Load the state backend
-    let backend = load_backend(state_path);
-    ensure_backend_initialized(&backend).await?;
-
-    // Get current state from backend
-    let source_state = backend
-        .get_current_state()
-        .await
-        .into_diagnostic()
-        .wrap_err("Failed to load current state from backend")?;
-
-    // Connect to database and load target state
-    if !dry_run {
-        println!("Connecting to database...");
-    }
-
-    let client = db::connect(database_url)
-        .await
-        .into_diagnostic()
-        .wrap_err("Failed to connect to database")?;
-
-    let catalog = PostgresCatalog::new(&client);
-
-    if !dry_run {
-        println!("Loading schema '{}'...", schema);
-    }
-
-    let target_state = crate::db::query::load_namespace(&catalog, schema)
-        .await
-        .into_diagnostic()
-        .wrap_err_with(|| format!("Failed to load schema '{}'", schema))?;
-
-    // Check for schema drift before compiling
-    let source_hash = StateHash::from_namespace(&source_state);
-    let target_hash = StateHash::from_namespace(&target_state);
-
-    if source_hash != target_hash && !allow_drift {
-        // Schema drift detected - warn the user
-        let drift_summary = compute_drift_summary(&source_state, &target_state);
-
-        return Err(miette!(
-            help = "Run 'tern verify' to see detailed drift information.\n\
-                    To proceed anyway, use --allow-drift to explicitly capture the drift.",
-            "Schema drift detected between state backend and database.\n\n\
-             The database has been modified outside of Tern migrations.\n\n\
-             {}\n\n\
-             Compiling now would capture these untracked changes as part of your migration.",
-            drift_summary
-        ));
-    }
-
-    if source_hash != target_hash && allow_drift && !dry_run {
-        println!("WARNING: Schema drift detected. Proceeding with --allow-drift.");
-    }
-
-    // Compile the migration
-    if !dry_run {
-        println!("Compiling migration...");
-    }
-
-    let options = CompileOptions::new(description).with_target(target);
-    let result = compile_migration(&source_state, &target_state, options).into_diagnostic()?;
-
-    // Build output
-    let statements = if show_sql {
-        Some(
-            result
-                .compilation
-                .statements
-                .iter()
-                .map(|s| StatementOutput {
-                    description: s.description.clone(),
-                    sql: s.sql.clone(),
-                })
-                .collect(),
-        )
-    } else {
-        None
-    };
-
-    let breaking_changes: Vec<BreakingChangeOutput> = result
-        .compilation
-        .breaking_changes
-        .iter()
-        .map(|bc| BreakingChangeOutput {
-            description: bc.description.clone(),
-            mitigation: format!("{:?}", bc.mitigation),
-        })
-        .collect();
-
-    let compile_output = CompileOutput {
-        migration_id: result.migration_id(),
-        description: description.to_string(),
-        statement_count: result.statement_count(),
-        has_breaking_changes: result.has_breaking_changes(),
-        has_destructive_changes: result.has_destructive_changes(),
-        source_state_hash: result.source_hash.to_hex(),
-        target_state_hash: result.target_hash.to_hex(),
-        output_path: output.as_ref().map(|p| p.display().to_string()),
-        statements,
-        breaking_changes,
-    };
-
-    // Write output if requested
-    if let Some(ref output_path) = output
-        && !dry_run
-    {
-        // Create parent directories if needed
-        if let Some(parent) = output_path.parent() {
-            std::fs::create_dir_all(parent)
-                .into_diagnostic()
-                .wrap_err("Failed to create output directory")?;
-        }
-
-        // Write the source code
-        std::fs::write(output_path, result.source_code())
-            .into_diagnostic()
-            .wrap_err("Failed to write output file")?;
-    }
-
-    // Record migration if requested
-    if record && !dry_run {
-        backend
-            .record_migration(&result.migration, &target_state)
-            .await
-            .into_diagnostic()
-            .wrap_err("Failed to record migration")?;
-
-        println!("Migration recorded to state backend.");
-    }
-
-    // Output results
-    match format {
-        OutputFormat::Text => println!("{}", compile_output),
-        OutputFormat::Json => print_json(&compile_output),
-        OutputFormat::Sql => {
-            for stmt in &result.compilation.statements {
-                println!("{};", stmt.sql);
-                println!();
-            }
-        }
-    }
-
-    Ok(())
 }
 
 /// Compute a brief summary of schema drift for error messages.

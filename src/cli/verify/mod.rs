@@ -57,6 +57,122 @@ pub struct VerifyChain {
     pub path: Option<PathBuf>,
 }
 
+impl Verify {
+    /// Dispatch the verify command.
+    pub async fn dispatch(self) -> miette::Result<()> {
+        // Load the state backend
+        let backend = load_backend(self.path.as_deref());
+        ensure_backend_initialized(&backend).await?;
+
+        // Connect to database
+        println!("Connecting to database...");
+        let client = db::connect(&self.database_url)
+            .await
+            .into_diagnostic()
+            .wrap_err("Failed to connect to database")?;
+
+        let catalog = PostgresCatalog::new(&client);
+
+        println!("Verifying schema '{}'...", self.schema);
+
+        // Get cached state (includes pre-computed xxhash3 checksum)
+        let cached_state = backend.get_cached_state().into_diagnostic()?;
+        let backend_checksum = cached_state.checksum().to_string();
+        let backend_state = cached_state.into_namespace();
+
+        // Load database state and compute its checksum
+        let database_state = crate::db::query::load_namespace(&catalog, &self.schema)
+            .await
+            .into_diagnostic()?;
+        let database_checksum = compute_schema_checksum(&database_state);
+
+        // Quick check using checksums first
+        let checksums_match = backend_checksum == database_checksum;
+
+        // Compute BLAKE3 state hashes for display
+        let backend_hash = StateHash::from_namespace(&backend_state);
+        let database_hash = StateHash::from_namespace(&database_state);
+
+        // Compute drift details if checksums don't match
+        let drift_details = if !checksums_match {
+            Some(compute_drift(&backend_state, &database_state))
+        } else {
+            None
+        };
+
+        let output = VerifyOutput {
+            verified: checksums_match,
+            backend_state_hash: backend_hash.to_hex(),
+            database_state_hash: database_hash.to_hex(),
+            backend_schema_checksum: backend_checksum,
+            database_schema_checksum: database_checksum,
+            message: if checksums_match {
+                "State backend is in sync with database.".to_string()
+            } else {
+                "Database has been modified outside of Tern migrations.".to_string()
+            },
+            drift_details,
+        };
+
+        match self.format {
+            OutputFormat::Text | OutputFormat::Sql => println!("{}", output),
+            OutputFormat::Json => print_json(&output),
+        }
+
+        // Return error if verification failed (for CI usage)
+        if !checksums_match {
+            std::process::exit(1);
+        }
+
+        Ok(())
+    }
+}
+
+impl VerifyChain {
+    /// Dispatch the verify chain command.
+    pub async fn dispatch(self) -> miette::Result<()> {
+        // Load the state backend
+        let backend = load_backend(self.path.as_deref());
+        ensure_backend_initialized(&backend).await?;
+
+        println!("Verifying migration chain...");
+
+        match backend.verify_chain().await {
+            Ok(()) => {
+                let index = backend.get_migration_index().await.into_diagnostic()?;
+                let output = ChainVerifyOutput {
+                    verified: true,
+                    migration_count: index.len(),
+                    message: format!(
+                        "Migration chain verified: {} migrations with valid chain integrity.",
+                        index.len()
+                    ),
+                };
+
+                match self.format {
+                    OutputFormat::Text | OutputFormat::Sql => println!("{}", output),
+                    OutputFormat::Json => print_json(&output),
+                }
+                Ok(())
+            }
+            Err(e) => {
+                let output = ChainVerifyOutput {
+                    verified: false,
+                    migration_count: 0,
+                    message: format!("Chain verification failed: {}", e),
+                };
+
+                match self.format {
+                    OutputFormat::Text | OutputFormat::Sql => println!("{}", output),
+                    OutputFormat::Json => print_json(&output),
+                }
+
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
 /// Verify output for JSON format.
 #[derive(Debug, Clone, Serialize)]
 pub struct VerifyOutput {
@@ -405,89 +521,6 @@ fn count_table_changes(table: &ModifiedTableSummary) -> usize {
         + table.modified_indexes.len()
 }
 
-/// Runs the verify command.
-///
-/// Verifies that the state backend matches the current database schema.
-///
-/// # Arguments
-///
-/// * `database_url` - PostgreSQL connection string
-/// * `schema` - Database schema name
-/// * `format` - Output format
-/// * `state_path` - Optional path to the state directory
-pub async fn run_verify(
-    database_url: &str,
-    schema: &str,
-    format: OutputFormat,
-    state_path: Option<&std::path::Path>,
-) -> miette::Result<()> {
-    // Load the state backend
-    let backend = load_backend(state_path);
-    ensure_backend_initialized(&backend).await?;
-
-    // Connect to database
-    println!("Connecting to database...");
-    let client = db::connect(database_url)
-        .await
-        .into_diagnostic()
-        .wrap_err("Failed to connect to database")?;
-
-    let catalog = PostgresCatalog::new(&client);
-
-    println!("Verifying schema '{}'...", schema);
-
-    // Get cached state (includes pre-computed xxhash3 checksum)
-    let cached_state = backend.get_cached_state().into_diagnostic()?;
-    let backend_checksum = cached_state.checksum().to_string();
-    let backend_state = cached_state.into_namespace();
-
-    // Load database state and compute its checksum
-    let database_state = crate::db::query::load_namespace(&catalog, schema)
-        .await
-        .into_diagnostic()?;
-    let database_checksum = compute_schema_checksum(&database_state);
-
-    // Quick check using checksums first
-    let checksums_match = backend_checksum == database_checksum;
-
-    // Compute BLAKE3 state hashes for display
-    let backend_hash = StateHash::from_namespace(&backend_state);
-    let database_hash = StateHash::from_namespace(&database_state);
-
-    // Compute drift details if checksums don't match
-    let drift_details = if !checksums_match {
-        Some(compute_drift(&backend_state, &database_state))
-    } else {
-        None
-    };
-
-    let output = VerifyOutput {
-        verified: checksums_match,
-        backend_state_hash: backend_hash.to_hex(),
-        database_state_hash: database_hash.to_hex(),
-        backend_schema_checksum: backend_checksum,
-        database_schema_checksum: database_checksum,
-        message: if checksums_match {
-            "State backend is in sync with database.".to_string()
-        } else {
-            "Database has been modified outside of Tern migrations.".to_string()
-        },
-        drift_details,
-    };
-
-    match format {
-        OutputFormat::Text | OutputFormat::Sql => println!("{}", output),
-        OutputFormat::Json => print_json(&output),
-    }
-
-    // Return error if verification failed (for CI usage)
-    if !checksums_match {
-        std::process::exit(1);
-    }
-
-    Ok(())
-}
-
 /// Compute drift details between backend state and database state.
 ///
 /// Uses the comprehensive diff_namespaces function for accurate change detection.
@@ -680,59 +713,6 @@ fn build_drift_details(diff: &NamespaceDiff) -> DriftDetails {
     }
 }
 
-/// Runs the verify chain command.
-///
-/// Verifies the integrity of the migration chain in the state backend.
-///
-/// # Arguments
-///
-/// * `format` - Output format
-/// * `state_path` - Optional path to the state directory
-pub async fn run_verify_chain(
-    format: OutputFormat,
-    state_path: Option<&std::path::Path>,
-) -> miette::Result<()> {
-    // Load the state backend
-    let backend = load_backend(state_path);
-    ensure_backend_initialized(&backend).await?;
-
-    println!("Verifying migration chain...");
-
-    match backend.verify_chain().await {
-        Ok(()) => {
-            let index = backend.get_migration_index().await.into_diagnostic()?;
-            let output = ChainVerifyOutput {
-                verified: true,
-                migration_count: index.len(),
-                message: format!(
-                    "Migration chain verified: {} migrations with valid chain integrity.",
-                    index.len()
-                ),
-            };
-
-            match format {
-                OutputFormat::Text | OutputFormat::Sql => println!("{}", output),
-                OutputFormat::Json => print_json(&output),
-            }
-            Ok(())
-        }
-        Err(e) => {
-            let output = ChainVerifyOutput {
-                verified: false,
-                migration_count: 0,
-                message: format!("Chain verification failed: {}", e),
-            };
-
-            match format {
-                OutputFormat::Text | OutputFormat::Sql => println!("{}", output),
-                OutputFormat::Json => print_json(&output),
-            }
-
-            std::process::exit(1);
-        }
-    }
-}
-
 /// Chain verification output.
 #[derive(Debug, Clone, Serialize)]
 pub struct ChainVerifyOutput {
@@ -775,9 +755,11 @@ mod tests {
         init_empty(&backend, "public").await.unwrap();
 
         // Chain verification should pass
-        run_verify_chain(OutputFormat::Text, Some(temp_dir.path()))
-            .await
-            .unwrap();
+        let verify_chain = VerifyChain {
+            format: OutputFormat::Text,
+            path: Some(temp_dir.path().to_path_buf()),
+        };
+        verify_chain.dispatch().await.unwrap();
     }
 
     #[test]

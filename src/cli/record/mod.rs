@@ -46,6 +46,111 @@ pub struct Record {
     pub path: Option<PathBuf>,
 }
 
+impl Record {
+    /// Dispatch the record command.
+    pub async fn dispatch(self) -> miette::Result<()> {
+        anstream::eprintln!("WARNING: 'record' is deprecated.");
+
+        // Must provide one of migration_id or migration_file
+        if self.migration_id.is_none() && self.migration_file.is_none() {
+            return Err(miette!(
+                "Must provide either --migration-id or --migration-file"
+            ));
+        }
+
+        if self.migration_id.is_some() && self.migration_file.is_some() {
+            return Err(miette!(
+                "Cannot provide both --migration-id and --migration-file"
+            ));
+        }
+
+        // Load the state backend
+        let backend = load_backend(self.path.as_deref());
+        ensure_backend_initialized(&backend).await?;
+
+        // Load the migration
+        let (migration, new_state) = if let Some(file_path) = self.migration_file {
+            // Load migration from file
+            let content = std::fs::read_to_string(&file_path)
+                .into_diagnostic()
+                .wrap_err_with(|| {
+                    format!("Failed to read migration file: {}", file_path.display())
+                })?;
+
+            let migration: Migration = serde_json::from_str(&content)
+                .into_diagnostic()
+                .wrap_err("Failed to parse migration JSON")?;
+
+            // Verify the migration chain
+            let current_hash = backend.get_current_state_hash().await.into_diagnostic()?;
+            if migration.parent_state_hash != current_hash {
+                return Err(miette!(
+                    "Migration parent hash ({}) does not match current state ({})",
+                    migration.parent_state_hash.to_short_hex(),
+                    current_hash.to_short_hex()
+                ));
+            }
+
+            // If the migration has a checkpoint state, use it; otherwise reconstruct
+            let new_state = if let Some(ref state) = migration.checkpoint_state {
+                state.clone()
+            } else {
+                // We need to apply the operations to the current state
+                let current_state = backend.get_current_state().await.into_diagnostic()?;
+                current_state
+                    .apply(&migration.operations)
+                    .into_diagnostic()
+                    .wrap_err("Failed to apply migration operations")?
+            };
+
+            (migration, new_state)
+        } else if let Some(id_str) = self.migration_id.as_deref() {
+            // Look up existing migration by ID
+            let id = parse_migration_id(id_str)?;
+
+            // Check if migration exists in backend
+            let migration = match backend.get_migration(&id).await {
+                Ok(m) => m,
+                Err(_) => {
+                    return Err(miette!(
+                        "Migration {} not found in state backend.\n\nTo record an external migration, use --migration-file.",
+                        id_str
+                    ));
+                }
+            };
+
+            // Get the state at this migration
+            let new_state = backend.get_state_at(&id).await.into_diagnostic()?;
+
+            (migration, new_state)
+        } else {
+            unreachable!("Validated above");
+        };
+
+        // Record the migration
+        backend
+            .record_migration(&migration, &new_state)
+            .await
+            .into_diagnostic()
+            .wrap_err("Failed to record migration")?;
+
+        let output = RecordOutput {
+            success: true,
+            migration_id: migration.id.to_hex(),
+            description: migration.description.clone(),
+            new_state_hash: migration.resulting_state_hash.to_hex(),
+            message: "Migration has been recorded to the state backend.".to_string(),
+        };
+
+        match self.format {
+            OutputFormat::Text | OutputFormat::Sql => println!("{}", output),
+            OutputFormat::Json => print_json(&output),
+        }
+
+        Ok(())
+    }
+}
+
 /// Record output for JSON format.
 #[derive(Debug, Clone, Serialize)]
 pub struct RecordOutput {
@@ -73,121 +178,6 @@ impl std::fmt::Display for RecordOutput {
         writeln!(f, "{}", self.message)?;
         Ok(())
     }
-}
-
-/// Runs the record command.
-///
-/// Records a migration as applied to the state backend. The migration can be
-/// specified either by ID (if it already exists in the backend) or by loading
-/// from a file.
-///
-/// # Arguments
-///
-/// * `migration_id` - Optional migration ID to mark as applied
-/// * `migration_file` - Optional path to a migration JSON file
-/// * `format` - Output format
-/// * `state_path` - Optional path to the state directory
-pub async fn run_record(
-    migration_id: Option<&str>,
-    migration_file: Option<PathBuf>,
-    format: OutputFormat,
-    state_path: Option<&std::path::Path>,
-) -> miette::Result<()> {
-    // Must provide one of migration_id or migration_file
-    if migration_id.is_none() && migration_file.is_none() {
-        return Err(miette!(
-            "Must provide either --migration-id or --migration-file"
-        ));
-    }
-
-    if migration_id.is_some() && migration_file.is_some() {
-        return Err(miette!(
-            "Cannot provide both --migration-id and --migration-file"
-        ));
-    }
-
-    // Load the state backend
-    let backend = load_backend(state_path);
-    ensure_backend_initialized(&backend).await?;
-
-    // Load the migration
-    let (migration, new_state) = if let Some(file_path) = migration_file {
-        // Load migration from file
-        let content = std::fs::read_to_string(&file_path)
-            .into_diagnostic()
-            .wrap_err_with(|| format!("Failed to read migration file: {}", file_path.display()))?;
-
-        let migration: Migration = serde_json::from_str(&content)
-            .into_diagnostic()
-            .wrap_err("Failed to parse migration JSON")?;
-
-        // Verify the migration chain
-        let current_hash = backend.get_current_state_hash().await.into_diagnostic()?;
-        if migration.parent_state_hash != current_hash {
-            return Err(miette!(
-                "Migration parent hash ({}) does not match current state ({})",
-                migration.parent_state_hash.to_short_hex(),
-                current_hash.to_short_hex()
-            ));
-        }
-
-        // If the migration has a checkpoint state, use it; otherwise reconstruct
-        let new_state = if let Some(ref state) = migration.checkpoint_state {
-            state.clone()
-        } else {
-            // We need to apply the operations to the current state
-            let current_state = backend.get_current_state().await.into_diagnostic()?;
-            current_state
-                .apply(&migration.operations)
-                .into_diagnostic()
-                .wrap_err("Failed to apply migration operations")?
-        };
-
-        (migration, new_state)
-    } else if let Some(id_str) = migration_id {
-        // Look up existing migration by ID
-        let id = parse_migration_id(id_str)?;
-
-        // Check if migration exists in backend
-        let migration = match backend.get_migration(&id).await {
-            Ok(m) => m,
-            Err(_) => {
-                return Err(miette!(
-                    "Migration {} not found in state backend.\n\nTo record an external migration, use --migration-file.",
-                    id_str
-                ));
-            }
-        };
-
-        // Get the state at this migration
-        let new_state = backend.get_state_at(&id).await.into_diagnostic()?;
-
-        (migration, new_state)
-    } else {
-        unreachable!("Validated above");
-    };
-
-    // Record the migration
-    backend
-        .record_migration(&migration, &new_state)
-        .await
-        .into_diagnostic()
-        .wrap_err("Failed to record migration")?;
-
-    let output = RecordOutput {
-        success: true,
-        migration_id: migration.id.to_hex(),
-        description: migration.description.clone(),
-        new_state_hash: migration.resulting_state_hash.to_hex(),
-        message: "Migration has been recorded to the state backend.".to_string(),
-    };
-
-    match format {
-        OutputFormat::Text | OutputFormat::Sql => println!("{}", output),
-        OutputFormat::Json => print_json(&output),
-    }
-
-    Ok(())
 }
 
 /// Parse a migration ID from a string (full hex or prefix).
@@ -231,7 +221,13 @@ mod tests {
         let backend = LocalFileBackend::at_path(temp_dir.path());
         init_empty(&backend, "public").await.unwrap();
 
-        let result = run_record(None, None, OutputFormat::Text, Some(temp_dir.path())).await;
+        let record = Record {
+            migration_id: None,
+            migration_file: None,
+            format: OutputFormat::Text,
+            path: Some(temp_dir.path().to_path_buf()),
+        };
+        let result = record.dispatch().await;
         assert!(result.is_err());
     }
 
@@ -241,13 +237,13 @@ mod tests {
         let backend = LocalFileBackend::at_path(temp_dir.path());
         init_empty(&backend, "public").await.unwrap();
 
-        let result = run_record(
-            Some("abc123"),
-            Some(PathBuf::from("test.json")),
-            OutputFormat::Text,
-            Some(temp_dir.path()),
-        )
-        .await;
+        let record = Record {
+            migration_id: Some("abc123".to_string()),
+            migration_file: Some(PathBuf::from("test.json")),
+            format: OutputFormat::Text,
+            path: Some(temp_dir.path().to_path_buf()),
+        };
+        let result = record.dispatch().await;
         assert!(result.is_err());
     }
 
@@ -279,14 +275,13 @@ mod tests {
         .unwrap();
 
         // Record should succeed
-        run_record(
-            None,
-            Some(migration_file),
-            OutputFormat::Text,
-            Some(temp_dir.path()),
-        )
-        .await
-        .unwrap();
+        let record = Record {
+            migration_id: None,
+            migration_file: Some(migration_file),
+            format: OutputFormat::Text,
+            path: Some(temp_dir.path().to_path_buf()),
+        };
+        record.dispatch().await.unwrap();
 
         // Verify migration was recorded
         let index = backend.get_migration_index().await.unwrap();

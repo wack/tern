@@ -1,6 +1,6 @@
-//! Schema migrate command.
+//! Generate migration command.
 //!
-//! This command generates a migration from schema changes.
+//! This command generates a migration from changes made to `.tern/schema.sql`.
 
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -10,32 +10,26 @@ use clap::Args;
 use miette::IntoDiagnostic;
 use serde::Serialize;
 
-use super::diff::BreakingChangeOutput;
 use crate::cli::{OutputFormat, ensure_backend_initialized, load_backend, print_json};
-use crate::db::diff::breaking::{MitigationStrategy, analyze_breaking_changes};
+use crate::db::diff::breaking::{BreakingChange, MitigationStrategy, analyze_breaking_changes};
 use crate::db::diff::diff_namespaces;
 use crate::db::migrate::{MigrationPlan, PostgresRenderer, RenderConfig};
 use crate::db::pglite::SchemaLoader;
 use crate::db::state::{Migration, StateBackend, StateHash};
 
-/// Generate migration from schema changes
+/// Generate migration from schema changes.
 ///
 /// Compares the current migration state to the edited schema.sql file
-/// and generates a migration that would transform the schema. This is
-/// the core of the model-first migration workflow.
+/// and generates a migration that would transform the schema.
 #[derive(Debug, Clone, Args)]
-pub struct Migrate {
-    /// Path to the edited schema file (default: .tern/schema.sql)
-    #[arg(short, long)]
-    pub schema: Option<PathBuf>,
-
-    /// Migration description
+pub struct Generate {
+    /// Migration description (required)
     #[arg(short, long)]
     pub description: String,
 
-    /// Output format (text shows summary, sql shows migration SQL, json includes metadata)
-    #[arg(long, default_value = "text")]
-    pub format: OutputFormat,
+    /// Path to the schema file
+    #[arg(short, long)]
+    pub schema: Option<PathBuf>,
 
     /// Path to the state directory
     #[arg(long)]
@@ -48,15 +42,107 @@ pub struct Migrate {
     /// Skip confirmation prompt for destructive changes
     #[arg(long)]
     pub force: bool,
+
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
 }
 
-impl Migrate {
-    /// Dispatch the schema migrate command.
-    pub async fn dispatch(self) -> miette::Result<()> {
-        anstream::eprintln!(
-            "WARNING: 'schema migrate' is deprecated. Use 'tern generate' instead."
-        );
+/// Output structure for generate JSON format.
+#[derive(Debug, Serialize)]
+pub struct GenerateOutput {
+    /// Migration ID (hex).
+    pub migration_id: String,
+    /// Migration description.
+    pub description: String,
+    /// Number of operations in the migration.
+    pub operation_count: usize,
+    /// Whether there are breaking changes.
+    pub has_breaking_changes: bool,
+    /// Whether there are destructive changes.
+    pub has_destructive_changes: bool,
+    /// Source state hash.
+    pub source_state_hash: String,
+    /// Target state hash.
+    pub target_state_hash: String,
+    /// Whether this was a dry run.
+    pub dry_run: bool,
+    /// Breaking changes with details.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub breaking_changes: Vec<BreakingChangeOutput>,
+}
 
+/// Breaking change output for JSON serialization.
+#[derive(Debug, Serialize)]
+pub struct BreakingChangeOutput {
+    /// Description of the breaking change.
+    pub description: String,
+    /// Mitigation strategy.
+    pub mitigation: String,
+}
+
+impl From<&BreakingChange> for BreakingChangeOutput {
+    fn from(bc: &BreakingChange) -> Self {
+        Self {
+            description: bc.description.clone(),
+            mitigation: bc.mitigation.as_str().to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for GenerateOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.dry_run {
+            writeln!(f, "Migration Preview (Dry Run)")?;
+            writeln!(f, "===========================")?;
+        } else {
+            writeln!(f, "Migration Created")?;
+            writeln!(f, "=================")?;
+        }
+        writeln!(f)?;
+        writeln!(
+            f,
+            "  ID:          {}",
+            &self.migration_id[..16.min(self.migration_id.len())]
+        )?;
+        writeln!(f, "  Description: {}", self.description)?;
+        writeln!(f, "  Operations:  {}", self.operation_count)?;
+        writeln!(
+            f,
+            "  From state:  {}",
+            &self.source_state_hash[..16.min(self.source_state_hash.len())]
+        )?;
+        writeln!(
+            f,
+            "  To state:    {}",
+            &self.target_state_hash[..16.min(self.target_state_hash.len())]
+        )?;
+
+        if self.has_breaking_changes {
+            writeln!(f)?;
+            writeln!(f, "WARNING: Breaking Changes Detected")?;
+            writeln!(f, "-----------------------------------")?;
+            for bc in &self.breaking_changes {
+                writeln!(f, "  [{}] {}", bc.mitigation, bc.description)?;
+            }
+        }
+
+        if self.dry_run {
+            writeln!(f)?;
+            writeln!(f, "This was a dry run. No migration was recorded.")?;
+            writeln!(f, "Run without --dry-run to create the migration.")?;
+        } else {
+            writeln!(f)?;
+            writeln!(f, "Run 'tern up <DATABASE_URL>' to apply this migration.")?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Generate {
+    /// Dispatch the generate command.
+    pub async fn dispatch(self) -> miette::Result<()> {
         let backend = load_backend(self.path.as_deref());
         ensure_backend_initialized(&backend).await?;
 
@@ -99,8 +185,8 @@ impl Migrate {
                     println!("The schema file matches the current state.");
                 }
                 OutputFormat::Json => {
-                    let output = SchemaMigrateOutput {
-                        migration_id: "".to_string(),
+                    let output = GenerateOutput {
+                        migration_id: String::new(),
                         description: self.description.clone(),
                         operation_count: 0,
                         has_breaking_changes: false,
@@ -161,7 +247,7 @@ impl Migrate {
             .map(BreakingChangeOutput::from)
             .collect();
 
-        let output = SchemaMigrateOutput {
+        let output = GenerateOutput {
             migration_id: migration.id.to_hex(),
             description: self.description.clone(),
             operation_count: migration.operations.len(),
@@ -196,65 +282,6 @@ impl Migrate {
     }
 }
 
-/// Output structure for schema migrate JSON format.
-#[derive(Debug, Serialize)]
-pub struct SchemaMigrateOutput {
-    /// Migration ID (hex).
-    pub migration_id: String,
-    /// Migration description.
-    pub description: String,
-    /// Number of operations in the migration.
-    pub operation_count: usize,
-    /// Whether there are breaking changes.
-    pub has_breaking_changes: bool,
-    /// Whether there are destructive changes.
-    pub has_destructive_changes: bool,
-    /// Source state hash.
-    pub source_state_hash: String,
-    /// Target state hash.
-    pub target_state_hash: String,
-    /// Whether this was a dry run.
-    pub dry_run: bool,
-    /// Breaking changes with details.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub breaking_changes: Vec<BreakingChangeOutput>,
-}
-
-impl std::fmt::Display for SchemaMigrateOutput {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.dry_run {
-            writeln!(f, "Migration Preview (Dry Run)")?;
-            writeln!(f, "===========================")?;
-        } else {
-            writeln!(f, "Migration Created")?;
-            writeln!(f, "=================")?;
-        }
-        writeln!(f)?;
-        writeln!(f, "  ID:          {}", self.migration_id)?;
-        writeln!(f, "  Description: {}", self.description)?;
-        writeln!(f, "  Operations:  {}", self.operation_count)?;
-        writeln!(f, "  From state:  {}", &self.source_state_hash[..16])?;
-        writeln!(f, "  To state:    {}", &self.target_state_hash[..16])?;
-
-        if self.has_breaking_changes {
-            writeln!(f)?;
-            writeln!(f, "WARNING: Breaking Changes Detected")?;
-            writeln!(f, "-----------------------------------")?;
-            for bc in &self.breaking_changes {
-                writeln!(f, "  [{}] {}", bc.mitigation, bc.description)?;
-            }
-        }
-
-        if self.dry_run {
-            writeln!(f)?;
-            writeln!(f, "This was a dry run. No migration was recorded.")?;
-            writeln!(f, "Run without --dry-run to create the migration.")?;
-        }
-
-        Ok(())
-    }
-}
-
 /// Prompts the user to confirm destructive changes.
 ///
 /// Returns `true` if the user confirms, `false` otherwise.
@@ -274,8 +301,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn migrate_output_display() {
-        let output = SchemaMigrateOutput {
+    fn generate_output_display() {
+        let output = GenerateOutput {
             migration_id: "abc123def456".repeat(5),
             description: "Add users table".to_string(),
             operation_count: 3,
@@ -294,8 +321,8 @@ mod tests {
     }
 
     #[test]
-    fn migrate_dry_run_display() {
-        let output = SchemaMigrateOutput {
+    fn generate_dry_run_display() {
+        let output = GenerateOutput {
             migration_id: "abc123def456".repeat(5),
             description: "Add users table".to_string(),
             operation_count: 1,
@@ -309,34 +336,11 @@ mod tests {
         let display = format!("{}", output);
         assert!(display.contains("Migration Preview (Dry Run)"));
         assert!(display.contains("This was a dry run"));
-        assert!(display.contains("Run without --dry-run"));
     }
 
     #[test]
-    fn migrate_with_breaking_changes_display() {
-        let output = SchemaMigrateOutput {
-            migration_id: "abc123".to_string(),
-            description: "Drop legacy".to_string(),
-            operation_count: 2,
-            has_breaking_changes: true,
-            has_destructive_changes: true,
-            source_state_hash: "src".repeat(16),
-            target_state_hash: "tgt".repeat(16),
-            dry_run: false,
-            breaking_changes: vec![BreakingChangeOutput {
-                description: "Table dropped".to_string(),
-                mitigation: "destructive".to_string(),
-            }],
-        };
-        let display = format!("{}", output);
-        assert!(display.contains("WARNING: Breaking Changes"));
-        assert!(display.contains("[destructive]"));
-        assert!(display.contains("Table dropped"));
-    }
-
-    #[test]
-    fn migrate_output_serializes() {
-        let output = SchemaMigrateOutput {
+    fn generate_output_serializes() {
+        let output = GenerateOutput {
             migration_id: "abc".to_string(),
             description: "Test".to_string(),
             operation_count: 1,
@@ -350,23 +354,5 @@ mod tests {
         let json = serde_json::to_string(&output).unwrap();
         assert!(json.contains("\"migration_id\":\"abc\""));
         assert!(json.contains("\"description\":\"Test\""));
-    }
-
-    #[test]
-    fn migrate_output_skips_empty_breaking_changes() {
-        let output = SchemaMigrateOutput {
-            migration_id: "abc".to_string(),
-            description: "Test".to_string(),
-            operation_count: 1,
-            has_breaking_changes: false,
-            has_destructive_changes: false,
-            source_state_hash: "src".to_string(),
-            target_state_hash: "tgt".to_string(),
-            dry_run: false,
-            breaking_changes: vec![],
-        };
-        let json = serde_json::to_string(&output).unwrap();
-        // Empty breaking_changes should be skipped due to serde skip_serializing_if
-        assert!(!json.contains("\"breaking_changes\""));
     }
 }

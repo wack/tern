@@ -4,30 +4,32 @@
 //! available commands and their argument structures.
 
 pub mod build;
+pub mod check;
 mod colors;
 pub mod compile;
+pub mod generate;
 pub mod history;
+pub mod import;
 pub mod init;
 pub mod inspect;
+pub mod print_migrations;
 pub mod record;
 pub mod schema;
 pub mod show;
 pub mod status;
+pub mod up;
 pub mod verify;
+pub mod version;
 
 pub use colors::EnableColors;
 
-use anstream::{eprintln, println};
+use anstream::println;
 use clap::{Parser, Subcommand};
-use miette::{Context, IntoDiagnostic};
+use miette::IntoDiagnostic;
 use serde::Serialize;
 use tracing::level_filters::LevelFilter;
 
-use crate::db::diff::breaking::analyze_breaking_changes;
-use crate::db::migrate::{MigrationPlan, PostgresRenderer, RenderConfig};
-use crate::db::query::{PostgresCatalog, diff_from_empty};
 use crate::db::state::{LocalFileBackend, StateBackend};
-use crate::db::{self};
 
 // =============================================================================
 // Shared Helpers (used by command modules)
@@ -128,23 +130,7 @@ pub struct Cli {
 #[derive(Debug, Subcommand, Clone)]
 pub enum CliCommand {
     /// Print the CLI version and exit
-    Version,
-
-    /// Print the SQL migrations needed to recreate the current database schema
-    ///
-    /// Connects to the specified database and generates the SQL DDL statements
-    /// that would recreate all objects in the specified schema from scratch.
-    /// This is useful for creating an initial baseline migration or for
-    /// understanding the current state of a database schema.
-    PrintMigrations {
-        /// PostgreSQL connection string (e.g., postgres://user:pass@localhost/db)
-        #[arg(long, env = "DATABASE_URL")]
-        database_url: String,
-
-        /// The schema to generate migrations for
-        #[arg(long, default_value = "public")]
-        schema: String,
-    },
+    Version(version::Version),
 
     /// Initialize a new Tern project with state backend
     ///
@@ -158,17 +144,29 @@ pub enum CliCommand {
     /// migration count, state hash, and schema summary.
     Status(status::Status),
 
-    /// Compile a migration to source code
+    /// Verification commands
     ///
-    /// Compares the state backend to the live database and generates
-    /// migration source code for the detected changes.
-    Compile(compile::Compile),
+    /// Commands for verifying schema consistency and migration state.
+    #[command(subcommand)]
+    Check(CheckAction),
 
-    /// Build a migration executable or OCI image
+    /// Import schema changes from a live database
     ///
-    /// Compares the state backend to the live database and builds a
-    /// standalone migration artifact (binary executable or OCI container image).
-    Build(build::Build),
+    /// Connects to a database, compares it to the current migration state,
+    /// and generates a migration for any differences found.
+    Import(import::Import),
+
+    /// Generate migration from schema changes
+    ///
+    /// Compares the current migration state to the edited schema.sql file
+    /// and generates a migration that would transform the schema.
+    Generate(generate::Generate),
+
+    /// Run pending migrations against a database
+    ///
+    /// Connects to a database and applies all migrations that haven't been
+    /// applied yet. Each migration runs in its own transaction.
+    Up(up::Up),
 
     /// List migration history
     ///
@@ -180,18 +178,6 @@ pub enum CliCommand {
     /// Displays detailed information about a migration, including
     /// its operations, state hashes, and breaking changes.
     Show(show::Show),
-
-    /// Record a migration as applied
-    ///
-    /// Marks a migration as applied in the state backend without
-    /// executing it. Useful for synchronizing state backends.
-    Record(record::Record),
-
-    /// Inspect a compiled migration file
-    ///
-    /// Examines a migration source file or JSON file and displays
-    /// its contents and metadata.
-    Inspect(inspect::Inspect),
 
     /// Verify state backend matches database
     ///
@@ -211,6 +197,56 @@ pub enum CliCommand {
     /// foundation of the model-first migration workflow.
     #[command(subcommand)]
     Schema(SchemaAction),
+
+    // =========================================================================
+    // Hidden/Deprecated Commands
+    // =========================================================================
+    /// [DEPRECATED] Print the SQL migrations needed to recreate the current database schema
+    ///
+    /// Connects to the specified database and generates the SQL DDL statements
+    /// that would recreate all objects in the specified schema from scratch.
+    /// This is useful for creating an initial baseline migration or for
+    /// understanding the current state of a database schema.
+    #[command(hide = true)]
+    PrintMigrations(print_migrations::PrintMigrations),
+
+    /// [DEPRECATED] Compile a migration to source code (use 'tern import' + 'tern build' instead)
+    ///
+    /// Compares the state backend to the live database and generates
+    /// migration source code for the detected changes.
+    #[command(hide = true)]
+    Compile(compile::Compile),
+
+    /// [DEPRECATED] Build a migration executable or OCI image
+    ///
+    /// Compares the state backend to the live database and builds a
+    /// standalone migration artifact (binary executable or OCI container image).
+    #[command(hide = true)]
+    Build(build::Build),
+
+    /// [DEPRECATED] Record a migration as applied
+    ///
+    /// Marks a migration as applied in the state backend without
+    /// executing it. Useful for synchronizing state backends.
+    #[command(hide = true)]
+    Record(record::Record),
+
+    /// [DEPRECATED] Inspect a compiled migration file
+    ///
+    /// Examines a migration source file or JSON file and displays
+    /// its contents and metadata.
+    #[command(hide = true)]
+    Inspect(inspect::Inspect),
+}
+
+/// Verification-related subcommands.
+#[derive(Debug, Subcommand, Clone)]
+pub enum CheckAction {
+    /// Verify that schema.sql is consistent with migrations
+    ///
+    /// Compares the schema defined in `.tern/schema.sql` with the schema
+    /// that would result from replaying all migrations. Reports any drift.
+    Schema(check::CheckSchema),
 }
 
 /// Schema-related subcommands.
@@ -227,96 +263,52 @@ pub enum SchemaAction {
     /// migration workflow.
     Export(schema::export::Export),
 
-    /// Show diff between current state and edited schema.sql
+    /// [DEPRECATED] Show diff between current state and edited schema.sql (use 'tern check schema' instead)
     ///
     /// Compares the current migration state to the edited schema.sql file
     /// and displays what operations would be needed to transform the schema.
     /// This is the preview step before generating a migration.
+    #[command(hide = true)]
     Diff(schema::diff::Diff),
 
-    /// Generate migration from schema changes
+    /// [DEPRECATED] Generate migration from schema changes (use 'tern generate' instead)
     ///
     /// Compares the current migration state to the edited schema.sql file
     /// and generates a migration that would transform the schema. This is
     /// the core of the model-first migration workflow.
+    #[command(hide = true)]
     Migrate(schema::migrate::Migrate),
 }
 
 impl CliCommand {
     pub async fn dispatch(self) -> miette::Result<()> {
         match self {
-            CliCommand::Version => {
-                println!("tern {}", env!("CARGO_PKG_VERSION"));
-                Ok(())
-            }
-            CliCommand::PrintMigrations {
-                database_url,
-                schema,
-            } => print_migrations(&database_url, &schema).await,
-            CliCommand::Init(args) => {
-                init::run_init(args.from, &args.schema, args.path.as_deref()).await
-            }
-            CliCommand::Status(args) => status::run_status(args.format, args.path.as_deref()).await,
-            CliCommand::Compile(args) => {
-                compile::run_compile(
-                    &args.database_url,
-                    &args.schema,
-                    args.output,
-                    &args.description,
-                    &args.target,
-                    args.record,
-                    args.dry_run,
-                    args.show_sql,
-                    args.format,
-                    args.state_path.as_deref(),
-                    args.allow_drift,
-                )
-                .await
-            }
-            CliCommand::Build(args) => {
-                build::run_build(
-                    &args.database_url,
-                    &args.schema,
-                    args.output,
-                    &args.description,
-                    &args.target,
-                    &args.package_format,
-                    args.record,
-                    args.format,
-                    args.state_path.as_deref(),
-                    args.allow_drift,
-                )
-                .await
-            }
-            CliCommand::History(args) => {
-                history::run_history(args.format, args.limit, args.path.as_deref()).await
-            }
-            CliCommand::Show(args) => {
-                show::run_show(&args.migration_id, args.format, args.path.as_deref()).await
-            }
-            CliCommand::Record(args) => {
-                record::run_record(
-                    args.migration_id.as_deref(),
-                    args.migration_file,
-                    args.format,
-                    args.path.as_deref(),
-                )
-                .await
-            }
-            CliCommand::Inspect(args) => inspect::run_inspect(args.path, args.format).await,
-            CliCommand::Verify(args) => {
-                verify::run_verify(
-                    &args.database_url,
-                    &args.schema,
-                    args.format,
-                    args.path.as_deref(),
-                )
-                .await
-            }
-            CliCommand::VerifyChain(args) => {
-                verify::run_verify_chain(args.format, args.path.as_deref()).await
-            }
+            CliCommand::Version(args) => args.dispatch().await,
+            CliCommand::Init(args) => args.dispatch().await,
+            CliCommand::Status(args) => args.dispatch().await,
+            CliCommand::Check(action) => action.dispatch().await,
+            CliCommand::Import(args) => args.dispatch().await,
+            CliCommand::Generate(args) => args.dispatch().await,
+            CliCommand::Up(args) => args.dispatch().await,
+            CliCommand::History(args) => args.dispatch().await,
+            CliCommand::Show(args) => args.dispatch().await,
+            CliCommand::Verify(args) => args.dispatch().await,
+            CliCommand::VerifyChain(args) => args.dispatch().await,
             CliCommand::Schema(action) => action.dispatch().await,
+            CliCommand::PrintMigrations(args) => args.dispatch().await,
+            CliCommand::Compile(args) => args.dispatch().await,
+            CliCommand::Build(args) => args.dispatch().await,
+            CliCommand::Record(args) => args.dispatch().await,
+            CliCommand::Inspect(args) => args.dispatch().await,
+        }
+    }
+}
+
+impl CheckAction {
+    /// Dispatch check subcommands.
+    pub async fn dispatch(self) -> miette::Result<()> {
+        match self {
+            CheckAction::Schema(args) => args.dispatch().await,
         }
     }
 }
@@ -325,63 +317,9 @@ impl SchemaAction {
     /// Dispatch schema subcommands.
     pub async fn dispatch(self) -> miette::Result<()> {
         match self {
-            SchemaAction::Export(args) => {
-                schema::run_schema_export(args.output, args.path.as_deref(), args.format).await
-            }
-            SchemaAction::Diff(args) => {
-                schema::run_schema_diff(args.schema, args.path.as_deref(), args.format).await
-            }
-            SchemaAction::Migrate(args) => {
-                schema::run_schema_migrate(
-                    args.schema,
-                    &args.description,
-                    args.path.as_deref(),
-                    args.format,
-                    args.dry_run,
-                    args.force,
-                )
-                .await
-            }
+            SchemaAction::Export(args) => args.dispatch().await,
+            SchemaAction::Diff(args) => args.dispatch().await,
+            SchemaAction::Migrate(args) => args.dispatch().await,
         }
     }
-}
-
-/// Connects to the database and prints migration SQL for the specified schema.
-async fn print_migrations(database_url: &str, schema_name: &str) -> miette::Result<()> {
-    // Connect to the database
-    let client = db::connect(database_url)
-        .await
-        .into_diagnostic()
-        .wrap_err("Failed to connect to database")?;
-
-    // Create catalog adapter
-    let catalog = PostgresCatalog::new(&client);
-
-    // Get diff from empty schema to current state
-    let diff = diff_from_empty(&catalog, schema_name)
-        .await
-        .into_diagnostic()
-        .wrap_err_with(|| format!("Failed to load schema '{}'", schema_name))?;
-
-    // Analyze for breaking changes
-    let analysis = analyze_breaking_changes(&diff);
-    if !analysis.is_safe() {
-        eprintln!("WARNING: {} breaking change(s) detected:", analysis.len());
-        for change in analysis.iter() {
-            eprintln!("  [{}] {}", change.mitigation.as_str(), change.description);
-        }
-        eprintln!();
-    }
-
-    // Create migration plan
-    let plan = MigrationPlan::from_diff(&diff);
-
-    // Render to SQL
-    let renderer = PostgresRenderer::new(RenderConfig::default());
-    let script = plan.render(&renderer);
-
-    // Print the SQL
-    println!("{}", script.to_sql());
-
-    Ok(())
 }

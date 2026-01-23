@@ -24,10 +24,11 @@ pub struct PrintMigrations {
 }
 
 impl PrintMigrations {
-    /// Runs the print-migrations command.
+    /// Dispatch the print-migrations command.
     ///
     /// Connects to the database and prints migration SQL for the specified schema.
-    pub async fn run(&self) -> miette::Result<()> {
+    pub async fn dispatch(&self) -> miette::Result<()> {
+        eprintln!("WARNING: 'print-migrations' is deprecated.");
         // Connect to the database
         let client = db::connect(&self.database_url)
             .await

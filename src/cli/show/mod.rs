@@ -120,86 +120,76 @@ impl std::fmt::Display for ShowOutput {
     }
 }
 
-/// Runs the show command.
-///
-/// Displays detailed information about a specific migration.
-///
-/// # Arguments
-///
-/// * `migration_id` - Migration ID (full or prefix)
-/// * `format` - Output format (text, json, or sql)
-/// * `state_path` - Optional path to the state directory
-pub async fn run_show(
-    migration_id: &str,
-    format: OutputFormat,
-    state_path: Option<&std::path::Path>,
-) -> miette::Result<()> {
-    // Load the state backend
-    let backend = load_backend(state_path);
-    ensure_backend_initialized(&backend).await?;
+impl Show {
+    /// Dispatch the show command.
+    pub async fn dispatch(self) -> miette::Result<()> {
+        // Load the state backend
+        let backend = load_backend(self.path.as_deref());
+        ensure_backend_initialized(&backend).await?;
 
-    // Find the migration
-    let migration = find_migration(&backend, migration_id).await?;
+        // Find the migration
+        let migration = find_migration(&backend, &self.migration_id).await?;
 
-    // Generate SQL if needed
-    let sql_statements = if matches!(format, OutputFormat::Sql) {
-        let plan = MigrationPlan::from_operations(migration.operations.clone());
-        let renderer = PostgresRenderer::new(RenderConfig::default());
-        let script = plan.render(&renderer);
-        Some(
-            script
-                .all_statements()
-                .into_iter()
-                .map(String::from)
+        // Generate SQL if needed
+        let sql_statements = if matches!(self.format, OutputFormat::Sql) {
+            let plan = MigrationPlan::from_operations(migration.operations.clone());
+            let renderer = PostgresRenderer::new(RenderConfig::default());
+            let script = plan.render(&renderer);
+            Some(
+                script
+                    .all_statements()
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+            )
+        } else {
+            None
+        };
+
+        // Build output
+        let output = ShowOutput {
+            id: migration.id.to_hex(),
+            short_id: migration.id.to_short_hex(),
+            description: migration.description.clone(),
+            created_at: migration.created_at.to_string(),
+            parent_state_hash: migration.parent_state_hash.to_hex(),
+            resulting_state_hash: migration.resulting_state_hash.to_hex(),
+            operation_count: migration.operation_count(),
+            has_breaking_changes: migration.has_breaking_changes(),
+            is_baseline: migration.is_baseline(),
+            is_checkpoint: migration.is_checkpoint(),
+            breaking_changes: migration
+                .breaking_changes
+                .iter()
+                .map(|bc| BreakingChangeInfo {
+                    description: bc.description.clone(),
+                    mitigation: bc.mitigation.as_str().to_string(),
+                })
                 .collect(),
-        )
-    } else {
-        None
-    };
+            sql_statements,
+        };
 
-    // Build output
-    let output = ShowOutput {
-        id: migration.id.to_hex(),
-        short_id: migration.id.to_short_hex(),
-        description: migration.description.clone(),
-        created_at: migration.created_at.to_string(),
-        parent_state_hash: migration.parent_state_hash.to_hex(),
-        resulting_state_hash: migration.resulting_state_hash.to_hex(),
-        operation_count: migration.operation_count(),
-        has_breaking_changes: migration.has_breaking_changes(),
-        is_baseline: migration.is_baseline(),
-        is_checkpoint: migration.is_checkpoint(),
-        breaking_changes: migration
-            .breaking_changes
-            .iter()
-            .map(|bc| BreakingChangeInfo {
-                description: bc.description.clone(),
-                mitigation: bc.mitigation.as_str().to_string(),
-            })
-            .collect(),
-        sql_statements,
-    };
-
-    match format {
-        OutputFormat::Text => println!("{}", output),
-        OutputFormat::Json => print_json(&output),
-        OutputFormat::Sql => {
-            if let Some(ref statements) = output.sql_statements {
-                if statements.is_empty() {
-                    println!("-- No SQL statements (baseline migration)");
-                } else {
-                    println!("-- Migration: {} ({})", output.short_id, output.description);
-                    println!();
-                    for stmt in statements {
-                        println!("{};", stmt);
+        match self.format {
+            OutputFormat::Text => println!("{}", output),
+            OutputFormat::Json => print_json(&output),
+            OutputFormat::Sql => {
+                if let Some(ref statements) = output.sql_statements {
+                    if statements.is_empty() {
+                        println!("-- No SQL statements (baseline migration)");
+                    } else {
+                        println!("-- Migration: {} ({})", output.short_id, output.description);
                         println!();
+                        for stmt in statements {
+                            println!("{};", stmt);
+                            println!();
+                        }
                     }
                 }
             }
         }
-    }
 
-    Ok(())
+        Ok(())
+    }
 }
 
 /// Finds a migration by ID or prefix.
@@ -260,9 +250,12 @@ mod tests {
         let baseline_id = index.last().unwrap().to_hex();
 
         // Show should work
-        run_show(&baseline_id, OutputFormat::Text, Some(temp_dir.path()))
-            .await
-            .unwrap();
+        let show = Show {
+            migration_id: baseline_id,
+            format: OutputFormat::Text,
+            path: Some(temp_dir.path().to_path_buf()),
+        };
+        show.dispatch().await.unwrap();
     }
 
     #[tokio::test]
@@ -275,12 +268,15 @@ mod tests {
 
         // Get baseline ID prefix
         let index = backend.get_migration_index().await.unwrap();
-        let prefix = &index.last().unwrap().to_hex()[..8];
+        let prefix = index.last().unwrap().to_hex()[..8].to_string();
 
         // Show by prefix should work
-        run_show(prefix, OutputFormat::Text, Some(temp_dir.path()))
-            .await
-            .unwrap();
+        let show = Show {
+            migration_id: prefix,
+            format: OutputFormat::Text,
+            path: Some(temp_dir.path().to_path_buf()),
+        };
+        show.dispatch().await.unwrap();
     }
 
     #[tokio::test]
@@ -292,7 +288,12 @@ mod tests {
         init_empty(&backend, "public").await.unwrap();
 
         // Non-existent ID should fail
-        let result = run_show("nonexistent", OutputFormat::Text, Some(temp_dir.path())).await;
+        let show = Show {
+            migration_id: "nonexistent".to_string(),
+            format: OutputFormat::Text,
+            path: Some(temp_dir.path().to_path_buf()),
+        };
+        let result = show.dispatch().await;
         assert!(result.is_err());
     }
 
