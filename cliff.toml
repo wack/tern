@@ -52,48 +52,50 @@ commit_preprocessors = [
   { pattern = '^\s+|\s+$', replace = "" },
 ]
 # regex for parsing and grouping commits
+# Note: Patterns use (^|\\n) to match at start of any line because with split_commits=true,
+# the commit_parsers are matched against the full commit message BEFORE splitting into lines.
 commit_parsers = [
   # Breaking changes - highest priority
-  { message = "(?i)^BREAKING[:\\s]", group = "Breaking Changes" },
+  { message = "(^|\\n)(?i)BREAKING[:\\s]", group = "Breaking Changes" },
   { message = "(?i)\\[BREAKING\\]", group = "Breaking Changes" },
   { body = "(?i)BREAKING CHANGE", group = "Breaking Changes" },
 
   # Security fixes
-  { message = "(?i)^SECURITY[:\\s]", group = "Security" },
+  { message = "(^|\\n)(?i)SECURITY[:\\s]", group = "Security" },
   { message = "(?i)\\[SECURITY\\]", group = "Security" },
 
   # Bug fixes
-  { message = "(?i)^BUG[:\\s]", group = "Bug Fixes" },
+  { message = "(^|\\n)(?i)BUG[:\\s]", group = "Bug Fixes" },
   { message = "(?i)\\[BUG\\]", group = "Bug Fixes" },
 
   # Features
-  { message = "(?i)^FEAT[:\\s]", group = "Features" },
-  { message = "(?i)^FEATURE[:\\s]", group = "Features" },
+  { message = "(^|\\n)(?i)FEAT[:\\s]", group = "Features" },
+  { message = "(^|\\n)(?i)FEATURE[:\\s]", group = "Features" },
   { message = "(?i)\\[FEAT\\]", group = "Features" },
 
   # Documentation
-  { message = "(?i)^DOCS[:\\s]", group = "Documentation" },
-  { message = "(?i)^DOC[:\\s]", group = "Documentation" },
+  { message = "(^|\\n)(?i)DOCS[:\\s]", group = "Documentation" },
+  { message = "(^|\\n)(?i)DOC[:\\s]", group = "Documentation" },
   { message = "(?i)\\[DOCS\\]", group = "Documentation" },
 
   # Refactoring
-  { message = "(?i)^REFACTOR[:\\s]", group = "Refactoring" },
+  { message = "(^|\\n)(?i)REFACTOR[:\\s]", group = "Refactoring" },
   { message = "(?i)\\[REFACTOR\\]", group = "Refactoring" },
 
   # Performance
-  { message = "(?i)^PERF[:\\s]", group = "Performance" },
+  { message = "(^|\\n)(?i)PERF[:\\s]", group = "Performance" },
   { message = "(?i)\\[PERF\\]", group = "Performance" },
 
   # Testing
-  { message = "(?i)^TEST[:\\s]", group = "Testing" },
+  { message = "(^|\\n)(?i)TEST[:\\s]", group = "Testing" },
   { message = "(?i)\\[TEST\\]", group = "Testing" },
 
   # Build/CI
-  { message = "(?i)^CI[:\\s]", group = "Build" },
+  { message = "(^|\\n)(?i)CI[:\\s]", group = "Build" },
   { message = "(?i)\\[CI\\]", group = "Build" },
 
   # Chores
-  { message = "(?i)^CHORE[:\\s]", group = "Miscellaneous" },
+  { message = "(^|\\n)(?i)CHORE[:\\s]", group = "Miscellaneous" },
   { message = "(?i)\\[CHORE\\]", group = "Miscellaneous" },
 ]
 # protect breaking changes from being skipped due to matching a skipping commit_parser
