@@ -3,22 +3,103 @@
 //! This module defines the command-line interface for Tern, including all
 //! available commands and their argument structures.
 
+pub mod build;
 mod colors;
-pub mod commands;
+pub mod compile;
+pub mod history;
+pub mod init;
+pub mod inspect;
+pub mod record;
+pub mod schema;
+pub mod show;
+pub mod status;
+pub mod verify;
 
 pub use colors::EnableColors;
-pub use commands::OutputFormat;
 
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use miette::{Context, IntoDiagnostic};
+use serde::Serialize;
 use tracing::level_filters::LevelFilter;
 
 use crate::db::diff::breaking::analyze_breaking_changes;
 use crate::db::migrate::{MigrationPlan, PostgresRenderer, RenderConfig};
 use crate::db::query::{PostgresCatalog, diff_from_empty};
+use crate::db::state::{LocalFileBackend, StateBackend};
 use crate::db::{self};
+
+// =============================================================================
+// Shared Helpers (used by command modules)
+// =============================================================================
+
+/// Loads or creates a state backend, preferring the specified path or the default location.
+pub fn load_backend(state_path: Option<&std::path::Path>) -> LocalFileBackend {
+    state_path
+        .map(LocalFileBackend::at_path)
+        .unwrap_or_else(LocalFileBackend::default_location)
+}
+
+/// Ensures the backend is initialized, returning an error if not.
+pub async fn ensure_backend_initialized(backend: &LocalFileBackend) -> miette::Result<()> {
+    if !backend.is_initialized().await.into_diagnostic()? {
+        return Err(miette::miette!(
+            "State backend not initialized at {}\n\nRun 'tern init' to initialize a new project.",
+            backend.root().display()
+        ));
+    }
+    Ok(())
+}
+
+/// Output format for CLI commands.
+#[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
+pub enum OutputFormat {
+    /// Human-readable text output.
+    #[default]
+    Text,
+    /// JSON output for machine consumption.
+    Json,
+    /// SQL output (for applicable commands).
+    Sql,
+}
+
+impl std::fmt::Display for OutputFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Text => write!(f, "text"),
+            Self::Json => write!(f, "json"),
+            Self::Sql => write!(f, "sql"),
+        }
+    }
+}
+
+/// Prints output in the specified format.
+#[allow(dead_code)]
+pub fn print_output<T: Serialize + std::fmt::Display>(output: &T, format: OutputFormat) {
+    match format {
+        OutputFormat::Text => println!("{}", output),
+        OutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(output).expect("failed to serialize output")
+            );
+        }
+        OutputFormat::Sql => println!("{}", output),
+    }
+}
+
+/// Prints a JSON-serializable value.
+pub fn print_json<T: Serialize>(output: &T) {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(output).expect("failed to serialize output")
+    );
+}
+
+// =============================================================================
+// CLI Definition
+// =============================================================================
 
 #[derive(Debug, Default, Clone, clap::ValueEnum)]
 pub enum LogFormat {
@@ -406,10 +487,10 @@ impl CliCommand {
                 schema,
             } => print_migrations(&database_url, &schema).await,
             CliCommand::Init { from, schema, path } => {
-                commands::run_init(from, &schema, path.as_deref()).await
+                init::run_init(from, &schema, path.as_deref()).await
             }
             CliCommand::Status { format, path } => {
-                commands::run_status(format, path.as_deref()).await
+                status::run_status(format, path.as_deref()).await
             }
             CliCommand::Compile {
                 database_url,
@@ -424,7 +505,7 @@ impl CliCommand {
                 state_path,
                 allow_drift,
             } => {
-                commands::run_compile(
+                compile::run_compile(
                     &database_url,
                     &schema,
                     output,
@@ -451,7 +532,7 @@ impl CliCommand {
                 state_path,
                 allow_drift,
             } => {
-                commands::run_build(
+                build::run_build(
                     &database_url,
                     &schema,
                     output,
@@ -469,19 +550,19 @@ impl CliCommand {
                 format,
                 limit,
                 path,
-            } => commands::run_history(format, limit, path.as_deref()).await,
+            } => history::run_history(format, limit, path.as_deref()).await,
             CliCommand::Show {
                 migration_id,
                 format,
                 path,
-            } => commands::run_show(&migration_id, format, path.as_deref()).await,
+            } => show::run_show(&migration_id, format, path.as_deref()).await,
             CliCommand::Record {
                 migration_id,
                 migration_file,
                 format,
                 path,
             } => {
-                commands::run_record(
+                record::run_record(
                     migration_id.as_deref(),
                     migration_file,
                     format,
@@ -489,15 +570,15 @@ impl CliCommand {
                 )
                 .await
             }
-            CliCommand::Inspect { path, format } => commands::run_inspect(path, format).await,
+            CliCommand::Inspect { path, format } => inspect::run_inspect(path, format).await,
             CliCommand::Verify {
                 database_url,
                 schema,
                 format,
                 path,
-            } => commands::run_verify(&database_url, &schema, format, path.as_deref()).await,
+            } => verify::run_verify(&database_url, &schema, format, path.as_deref()).await,
             CliCommand::VerifyChain { format, path } => {
-                commands::run_verify_chain(format, path.as_deref()).await
+                verify::run_verify_chain(format, path.as_deref()).await
             }
             CliCommand::Schema(action) => action.dispatch().await,
         }
@@ -512,13 +593,13 @@ impl SchemaAction {
                 output,
                 format,
                 path,
-            } => commands::run_schema_export(output, path.as_deref(), format).await,
+            } => schema::run_schema_export(output, path.as_deref(), format).await,
             #[cfg(feature = "pglite")]
             SchemaAction::Diff {
                 schema,
                 format,
                 path,
-            } => commands::run_schema_diff(schema, path.as_deref(), format).await,
+            } => schema::run_schema_diff(schema, path.as_deref(), format).await,
             #[cfg(feature = "pglite")]
             SchemaAction::Migrate {
                 schema,
@@ -528,7 +609,7 @@ impl SchemaAction {
                 dry_run,
                 force,
             } => {
-                commands::run_schema_migrate(
+                schema::run_schema_migrate(
                     schema,
                     &description,
                     path.as_deref(),
