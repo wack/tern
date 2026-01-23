@@ -18,8 +18,6 @@ pub mod verify;
 pub use colors::EnableColors;
 
 use anstream::{eprintln, println};
-use std::path::PathBuf;
-
 use clap::{Parser, Subcommand};
 use miette::{Context, IntoDiagnostic};
 use serde::Serialize;
@@ -227,71 +225,21 @@ pub enum SchemaAction {
     /// would recreate the current schema from scratch. This file is
     /// useful for viewing the schema, documentation, and the model-first
     /// migration workflow.
-    Export {
-        /// Output path for the schema file (default: .tern/schema.sql, use "-" for stdout)
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-
-        /// Output format (text shows summary, sql shows DDL, json includes metadata)
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
-
-        /// Path to the state directory
-        #[arg(long)]
-        path: Option<PathBuf>,
-    },
+    Export(schema::export::Export),
 
     /// Show diff between current state and edited schema.sql
     ///
     /// Compares the current migration state to the edited schema.sql file
     /// and displays what operations would be needed to transform the schema.
     /// This is the preview step before generating a migration.
-    #[cfg(feature = "pglite")]
-    Diff {
-        /// Path to the edited schema file (default: .tern/schema.sql)
-        #[arg(short, long)]
-        schema: Option<PathBuf>,
-
-        /// Output format (text shows summary, sql shows migration SQL, json includes metadata)
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
-
-        /// Path to the state directory
-        #[arg(long)]
-        path: Option<PathBuf>,
-    },
+    Diff(schema::diff::Diff),
 
     /// Generate migration from schema changes
     ///
     /// Compares the current migration state to the edited schema.sql file
     /// and generates a migration that would transform the schema. This is
     /// the core of the model-first migration workflow.
-    #[cfg(feature = "pglite")]
-    Migrate {
-        /// Path to the edited schema file (default: .tern/schema.sql)
-        #[arg(short, long)]
-        schema: Option<PathBuf>,
-
-        /// Migration description
-        #[arg(short, long)]
-        description: String,
-
-        /// Output format (text shows summary, sql shows migration SQL, json includes metadata)
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
-
-        /// Path to the state directory
-        #[arg(long)]
-        path: Option<PathBuf>,
-
-        /// Preview without recording the migration
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Skip confirmation prompt for destructive changes
-        #[arg(long)]
-        force: bool,
-    },
+    Migrate(schema::migrate::Migrate),
 }
 
 impl CliCommand {
@@ -377,33 +325,20 @@ impl SchemaAction {
     /// Dispatch schema subcommands.
     pub async fn dispatch(self) -> miette::Result<()> {
         match self {
-            SchemaAction::Export {
-                output,
-                format,
-                path,
-            } => schema::run_schema_export(output, path.as_deref(), format).await,
-            #[cfg(feature = "pglite")]
-            SchemaAction::Diff {
-                schema,
-                format,
-                path,
-            } => schema::run_schema_diff(schema, path.as_deref(), format).await,
-            #[cfg(feature = "pglite")]
-            SchemaAction::Migrate {
-                schema,
-                description,
-                format,
-                path,
-                dry_run,
-                force,
-            } => {
+            SchemaAction::Export(args) => {
+                schema::run_schema_export(args.output, args.path.as_deref(), args.format).await
+            }
+            SchemaAction::Diff(args) => {
+                schema::run_schema_diff(args.schema, args.path.as_deref(), args.format).await
+            }
+            SchemaAction::Migrate(args) => {
                 schema::run_schema_migrate(
-                    schema,
-                    &description,
-                    path.as_deref(),
-                    format,
-                    dry_run,
-                    force,
+                    args.schema,
+                    &args.description,
+                    args.path.as_deref(),
+                    args.format,
+                    args.dry_run,
+                    args.force,
                 )
                 .await
             }
