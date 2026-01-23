@@ -158,15 +158,7 @@ pub enum CliCommand {
     ///
     /// Displays information about the current state backend, including
     /// migration count, state hash, and schema summary.
-    Status {
-        /// Output format
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
-
-        /// Path to the state directory
-        #[arg(long)]
-        path: Option<PathBuf>,
-    },
+    Status(status::Status),
 
     /// Compile a migration to source code
     ///
@@ -478,9 +470,7 @@ impl CliCommand {
             CliCommand::Init(args) => {
                 init::run_init(args.from, &args.schema, args.path.as_deref()).await
             }
-            CliCommand::Status { format, path } => {
-                status::run_status(format, path.as_deref()).await
-            }
+            CliCommand::Status(args) => status::run_status(args.format, args.path.as_deref()).await,
             CliCommand::Compile {
                 database_url,
                 schema,
