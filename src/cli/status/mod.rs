@@ -3,12 +3,30 @@
 //! This command displays the current state of the migration backend,
 //! including migration count, current state hash, and last migration info.
 
+use std::path::PathBuf;
+
 use anstream::println;
+use clap::Args;
 use miette::{IntoDiagnostic, miette};
 use serde::Serialize;
 
 use super::{OutputFormat, print_json};
 use crate::db::state::{LocalFileBackend, StateBackend};
+
+/// Show state backend status
+///
+/// Displays information about the current state backend, including
+/// migration count, state hash, and schema summary.
+#[derive(Debug, Clone, Args)]
+pub struct Status {
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+
+    /// Path to the state directory
+    #[arg(long)]
+    pub path: Option<PathBuf>,
+}
 
 /// Status output for JSON format.
 #[derive(Debug, Clone, Serialize)]
