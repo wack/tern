@@ -8,4 +8,4 @@ license = "MIT"
 [dependencies]
 # xxhash3 for fast, high-quality schema checksums
 # Pure Rust implementation works on both native and wasm32 targets
-xxhash-rust = { version = "0.8", features = ["xxh3"] }
+twox-hash = { version = "2.1", default-features = false, features = ["xxhash3_64"] }

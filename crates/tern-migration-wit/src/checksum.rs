@@ -51,7 +51,7 @@
 //! - String representations are normalized (e.g., consistent whitespace in SQL)
 //! - Optional fields are handled consistently (explicit markers for None vs empty)
 
-use xxhash_rust::xxh3::Xxh3;
+use twox_hash::XxHash3_64;
 
 /// A hasher for computing deterministic schema checksums.
 ///
@@ -76,7 +76,7 @@ use xxhash_rust::xxh3::Xxh3;
 /// - `0x34`: Index
 /// - `0x40`: View
 pub struct SchemaHasher {
-    hasher: Xxh3,
+    buffer: Vec<u8>,
 }
 
 // Object type markers for unambiguous byte stream
@@ -96,9 +96,7 @@ impl SchemaHasher {
     /// Creates a new schema hasher.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            hasher: Xxh3::new(),
-        }
+        Self { buffer: Vec::new() }
     }
 
     /// Adds raw bytes to the hash input.
@@ -106,7 +104,7 @@ impl SchemaHasher {
     /// This is a low-level method. Prefer the structured methods like
     /// [`add_namespace`](Self::add_namespace) for most use cases.
     pub fn update(&mut self, data: &[u8]) {
-        self.hasher.update(data);
+        self.buffer.extend_from_slice(data);
     }
 
     /// Adds a length-prefixed string to the hash input.
@@ -114,8 +112,9 @@ impl SchemaHasher {
     /// The string is encoded as: `[4-byte little-endian length][utf-8 bytes]`
     fn add_string(&mut self, s: &str) {
         let bytes = s.as_bytes();
-        self.hasher.update(&(bytes.len() as u32).to_le_bytes());
-        self.hasher.update(bytes);
+        self.buffer
+            .extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        self.buffer.extend_from_slice(bytes);
     }
 
     /// Adds an optional string to the hash input.
@@ -123,9 +122,9 @@ impl SchemaHasher {
     /// Encodes as: `[0x00]` for None, `[0x01][string]` for Some.
     fn add_option_string(&mut self, s: Option<&str>) {
         match s {
-            None => self.hasher.update(&[0x00]),
+            None => self.buffer.push(0x00),
             Some(s) => {
-                self.hasher.update(&[0x01]);
+                self.buffer.push(0x01);
                 self.add_string(s);
             }
         }
@@ -136,13 +135,13 @@ impl SchemaHasher {
     /// All objects added after this call until [`end_namespace`](Self::end_namespace)
     /// are considered part of this namespace.
     pub fn add_namespace(&mut self, name: &str) {
-        self.hasher.update(&[MARKER_NAMESPACE_START]);
+        self.buffer.push(MARKER_NAMESPACE_START);
         self.add_string(name);
     }
 
     /// Marks the end of the current namespace.
     pub fn end_namespace(&mut self) {
-        self.hasher.update(&[MARKER_NAMESPACE_END]);
+        self.buffer.push(MARKER_NAMESPACE_END);
     }
 
     /// Adds an enum type definition.
@@ -152,11 +151,12 @@ impl SchemaHasher {
     /// * `name` - The enum type name
     /// * `values` - The enum values in order (must be consistent across calls)
     pub fn add_enum(&mut self, name: &str, values: &[&str]) {
-        self.hasher.update(&[MARKER_ENUM]);
+        self.buffer.push(MARKER_ENUM);
         self.add_string(name);
-        self.hasher.update(&(values.len() as u32).to_le_bytes());
+        self.buffer
+            .extend_from_slice(&(values.len() as u32).to_le_bytes());
         for value in values {
-            self.hasher.update(&[MARKER_ENUM_VALUE]);
+            self.buffer.push(MARKER_ENUM_VALUE);
             self.add_string(value);
         }
     }
@@ -185,15 +185,15 @@ impl SchemaHasher {
         cache: i64,
         cycle: bool,
     ) {
-        self.hasher.update(&[MARKER_SEQUENCE]);
+        self.buffer.push(MARKER_SEQUENCE);
         self.add_string(name);
         self.add_string(data_type);
-        self.hasher.update(&start.to_le_bytes());
-        self.hasher.update(&increment.to_le_bytes());
-        self.hasher.update(&min.to_le_bytes());
-        self.hasher.update(&max.to_le_bytes());
-        self.hasher.update(&cache.to_le_bytes());
-        self.hasher.update(&[cycle as u8]);
+        self.buffer.extend_from_slice(&start.to_le_bytes());
+        self.buffer.extend_from_slice(&increment.to_le_bytes());
+        self.buffer.extend_from_slice(&min.to_le_bytes());
+        self.buffer.extend_from_slice(&max.to_le_bytes());
+        self.buffer.extend_from_slice(&cache.to_le_bytes());
+        self.buffer.push(cycle as u8);
     }
 
     /// Marks the start of a table definition.
@@ -203,14 +203,14 @@ impl SchemaHasher {
     /// * `name` - The table name
     /// * `kind` - The table kind (e.g., "regular", "partitioned")
     pub fn add_table(&mut self, name: &str, kind: &str) {
-        self.hasher.update(&[MARKER_TABLE_START]);
+        self.buffer.push(MARKER_TABLE_START);
         self.add_string(name);
         self.add_string(kind);
     }
 
     /// Marks the end of the current table.
     pub fn end_table(&mut self) {
-        self.hasher.update(&[MARKER_TABLE_END]);
+        self.buffer.push(MARKER_TABLE_END);
     }
 
     /// Adds a column definition to the current table.
@@ -228,10 +228,10 @@ impl SchemaHasher {
         is_nullable: bool,
         default: Option<&str>,
     ) {
-        self.hasher.update(&[MARKER_COLUMN]);
+        self.buffer.push(MARKER_COLUMN);
         self.add_string(name);
         self.add_string(type_formatted);
-        self.hasher.update(&[is_nullable as u8]);
+        self.buffer.push(is_nullable as u8);
         self.add_option_string(default);
     }
 
@@ -259,10 +259,10 @@ impl SchemaHasher {
         generated: Option<&str>,
         collation: Option<&str>,
     ) {
-        self.hasher.update(&[MARKER_COLUMN]);
+        self.buffer.push(MARKER_COLUMN);
         self.add_string(name);
         self.add_string(type_formatted);
-        self.hasher.update(&[is_nullable as u8]);
+        self.buffer.push(is_nullable as u8);
         self.add_option_string(default);
         self.add_option_string(identity);
         self.add_option_string(generated);
@@ -277,7 +277,7 @@ impl SchemaHasher {
     /// * `kind` - The constraint kind (e.g., "primary_key", "foreign_key", "unique", "check")
     /// * `definition` - The constraint definition (columns, expression, etc.)
     pub fn add_constraint(&mut self, name: &str, kind: &str, definition: &str) {
-        self.hasher.update(&[MARKER_CONSTRAINT]);
+        self.buffer.push(MARKER_CONSTRAINT);
         self.add_string(name);
         self.add_string(kind);
         self.add_string(definition);
@@ -300,12 +300,12 @@ impl SchemaHasher {
         is_unique: bool,
         is_primary: bool,
     ) {
-        self.hasher.update(&[MARKER_INDEX]);
+        self.buffer.push(MARKER_INDEX);
         self.add_string(name);
         self.add_string(method);
         self.add_string(definition);
-        self.hasher.update(&[is_unique as u8]);
-        self.hasher.update(&[is_primary as u8]);
+        self.buffer.push(is_unique as u8);
+        self.buffer.push(is_primary as u8);
     }
 
     /// Adds a view definition.
@@ -316,10 +316,10 @@ impl SchemaHasher {
     /// * `definition` - The view SQL definition
     /// * `is_materialized` - Whether this is a materialized view
     pub fn add_view(&mut self, name: &str, definition: &str, is_materialized: bool) {
-        self.hasher.update(&[MARKER_VIEW]);
+        self.buffer.push(MARKER_VIEW);
         self.add_string(name);
         self.add_string(definition);
-        self.hasher.update(&[is_materialized as u8]);
+        self.buffer.push(is_materialized as u8);
     }
 
     /// Computes and returns the final checksum.
@@ -327,7 +327,7 @@ impl SchemaHasher {
     /// This consumes the hasher. The returned value is a 64-bit xxhash3 digest.
     #[must_use]
     pub fn finish(self) -> u64 {
-        self.hasher.digest()
+        XxHash3_64::oneshot(&self.buffer)
     }
 
     /// Computes the checksum and returns it as a hexadecimal string.
@@ -361,7 +361,7 @@ impl Default for SchemaHasher {
 /// ```
 #[must_use]
 pub fn xxh3_hash(data: &[u8]) -> u64 {
-    xxhash_rust::xxh3::xxh3_64(data)
+    XxHash3_64::oneshot(data)
 }
 
 /// Computes an xxhash3 checksum and returns it as a hexadecimal string.
