@@ -27,6 +27,54 @@ pub struct Inspect {
     pub format: OutputFormat,
 }
 
+impl Inspect {
+    /// Dispatch the inspect command.
+    pub async fn dispatch(self) -> miette::Result<()> {
+        anstream::eprintln!("WARNING: 'inspect' is deprecated.");
+
+        if !self.path.exists() {
+            return Err(miette!("File not found: {}", self.path.display()));
+        }
+
+        // Determine file type and inspect accordingly
+        let extension = self.path.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+        let output = match extension.to_lowercase().as_str() {
+            "json" => inspect_json_migration(&self.path)?,
+            "rs" => inspect_rust_source(&self.path)?,
+            _ => {
+                return Err(miette!(
+                    "Unsupported file type: '{}'. Expected .json or .rs",
+                    extension
+                ));
+            }
+        };
+
+        match self.format {
+            OutputFormat::Text => println!("{}", output),
+            OutputFormat::Json => print_json(&output),
+            OutputFormat::Sql => {
+                if let Some(ref statements) = output.sql_statements {
+                    println!(
+                        "-- Migration: {} ({})",
+                        output.migration_id.as_deref().unwrap_or("unknown"),
+                        output.description.as_deref().unwrap_or("unknown")
+                    );
+                    println!();
+                    for stmt in statements {
+                        println!("{};", stmt);
+                        println!();
+                    }
+                } else {
+                    println!("-- No SQL statements available");
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 /// Inspect output for JSON format.
 #[derive(Debug, Clone, Serialize)]
 pub struct InspectOutput {
@@ -124,57 +172,6 @@ impl std::fmt::Display for InspectOutput {
 
         Ok(())
     }
-}
-
-/// Runs the inspect command.
-///
-/// Inspects a migration file (JSON or Rust source) and displays its contents.
-///
-/// # Arguments
-///
-/// * `path` - Path to the file to inspect
-/// * `format` - Output format (text, json, or sql)
-pub async fn run_inspect(path: PathBuf, format: OutputFormat) -> miette::Result<()> {
-    if !path.exists() {
-        return Err(miette!("File not found: {}", path.display()));
-    }
-
-    // Determine file type and inspect accordingly
-    let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-
-    let output = match extension.to_lowercase().as_str() {
-        "json" => inspect_json_migration(&path)?,
-        "rs" => inspect_rust_source(&path)?,
-        _ => {
-            return Err(miette!(
-                "Unsupported file type: '{}'. Expected .json or .rs",
-                extension
-            ));
-        }
-    };
-
-    match format {
-        OutputFormat::Text => println!("{}", output),
-        OutputFormat::Json => print_json(&output),
-        OutputFormat::Sql => {
-            if let Some(ref statements) = output.sql_statements {
-                println!(
-                    "-- Migration: {} ({})",
-                    output.migration_id.as_deref().unwrap_or("unknown"),
-                    output.description.as_deref().unwrap_or("unknown")
-                );
-                println!();
-                for stmt in statements {
-                    println!("{};", stmt);
-                    println!();
-                }
-            } else {
-                println!("-- No SQL statements available");
-            }
-        }
-    }
-
-    Ok(())
 }
 
 /// Inspects a JSON migration file.
@@ -372,7 +369,11 @@ mod tests {
         .unwrap();
 
         // Inspect should succeed
-        run_inspect(file_path, OutputFormat::Text).await.unwrap();
+        let inspect = Inspect {
+            path: file_path,
+            format: OutputFormat::Text,
+        };
+        inspect.dispatch().await.unwrap();
     }
 
     #[tokio::test]
@@ -399,12 +400,20 @@ define_migration! {
         std::fs::write(&file_path, source).unwrap();
 
         // Inspect should succeed
-        run_inspect(file_path, OutputFormat::Text).await.unwrap();
+        let inspect = Inspect {
+            path: file_path,
+            format: OutputFormat::Text,
+        };
+        inspect.dispatch().await.unwrap();
     }
 
     #[tokio::test]
     async fn inspect_file_not_found() {
-        let result = run_inspect(PathBuf::from("/nonexistent/file.json"), OutputFormat::Text).await;
+        let inspect = Inspect {
+            path: PathBuf::from("/nonexistent/file.json"),
+            format: OutputFormat::Text,
+        };
+        let result = inspect.dispatch().await;
         assert!(result.is_err());
     }
 
@@ -414,7 +423,11 @@ define_migration! {
         let file_path = temp_dir.path().join("migration.txt");
         std::fs::write(&file_path, "test").unwrap();
 
-        let result = run_inspect(file_path, OutputFormat::Text).await;
+        let inspect = Inspect {
+            path: file_path,
+            format: OutputFormat::Text,
+        };
+        let result = inspect.dispatch().await;
         assert!(result.is_err());
     }
 

@@ -71,6 +71,188 @@ pub struct Build {
     pub allow_drift: bool,
 }
 
+impl Build {
+    /// Dispatch the build command.
+    pub async fn dispatch(self) -> miette::Result<()> {
+        anstream::eprintln!("WARNING: 'build' is deprecated.");
+
+        // Parse target
+        let target = Target::from_str_name(&self.target).ok_or_else(|| {
+            miette!(
+                "Invalid target: '{}'. Valid targets: native, x86_64-linux-gnu, x86_64-linux-musl, x86_64-macos, aarch64-macos, x86_64-windows",
+                self.target
+            )
+        })?;
+
+        // Parse package format
+        let package_format =
+            PackageFormat::from_str_name(&self.package_format).ok_or_else(|| {
+                miette!(
+                    "Invalid format: '{}'. Valid formats: binary, oci",
+                    self.package_format
+                )
+            })?;
+
+        // Load the state backend
+        let backend = load_backend(self.state_path.as_deref());
+        ensure_backend_initialized(&backend).await?;
+
+        // Get current state from backend
+        let source_state = backend
+            .get_current_state()
+            .await
+            .into_diagnostic()
+            .wrap_err("Failed to load current state from backend")?;
+
+        // Connect to database and load target state
+        println!("Connecting to database...");
+
+        let client = db::connect(&self.database_url)
+            .await
+            .into_diagnostic()
+            .wrap_err("Failed to connect to database")?;
+
+        let catalog = PostgresCatalog::new(&client);
+
+        println!("Loading schema '{}'...", self.schema);
+
+        let target_state = crate::db::query::load_namespace(&catalog, &self.schema)
+            .await
+            .into_diagnostic()
+            .wrap_err_with(|| format!("Failed to load schema '{}'", self.schema))?;
+
+        // Check for schema drift before building
+        let source_hash = StateHash::from_namespace(&source_state);
+        let target_hash = StateHash::from_namespace(&target_state);
+
+        if source_hash != target_hash && !self.allow_drift {
+            // Schema drift detected - warn the user
+            let drift_summary = compute_drift_summary(&source_state, &target_state);
+
+            return Err(miette!(
+                help = "Run 'tern verify' to see detailed drift information.\n\
+                        To proceed anyway, use --allow-drift to explicitly capture the drift.",
+                "Schema drift detected between state backend and database.\n\n\
+                 The database has been modified outside of Tern migrations.\n\n\
+                 {}\n\n\
+                 Building now would create an artifact that captures these untracked changes.",
+                drift_summary
+            ));
+        }
+
+        if source_hash != target_hash && self.allow_drift {
+            println!("WARNING: Schema drift detected. Proceeding with --allow-drift.");
+        }
+
+        // Compile the migration
+        println!("Compiling migration...");
+
+        let options = CompileOptions::new(&self.description).with_target(target);
+        let result = compile_migration(&source_state, &target_state, options).into_diagnostic()?;
+
+        // Create migration data for the executable builder
+        let now = Zoned::now();
+        let migration_data = MigrationData {
+            id: result.migration_id(),
+            description: self.description.clone(),
+            source_state_hash: result.source_hash.to_hex(),
+            target_state_hash: result.target_hash.to_hex(),
+            compiled_at: now.strftime("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            statements: result
+                .compilation
+                .statements
+                .iter()
+                .enumerate()
+                .map(|(i, s)| StatementData {
+                    description: s.description.clone(),
+                    sql: s.sql.clone(),
+                    sequence: (i + 1) as u32,
+                })
+                .collect(),
+            breaking_changes: result
+                .compilation
+                .breaking_changes
+                .iter()
+                .map(|bc| BreakingChangeData {
+                    description: bc.description.clone(),
+                    mitigation: match bc.mitigation {
+                        crate::db::diff::breaking::MitigationStrategy::DualWrite => {
+                            MitigationStrategy::DualWrite
+                        }
+                        crate::db::diff::breaking::MitigationStrategy::Backfill => {
+                            MitigationStrategy::Backfill
+                        }
+                        crate::db::diff::breaking::MitigationStrategy::Ratchet => {
+                            MitigationStrategy::Ratchet
+                        }
+                        crate::db::diff::breaking::MitigationStrategy::Destructive => {
+                            MitigationStrategy::Destructive
+                        }
+                    },
+                    affected_sql: bc.affected_sql.clone(),
+                })
+                .collect(),
+        };
+
+        // Build the executable or OCI image
+        println!(
+            "Building {} for {}...",
+            match package_format {
+                PackageFormat::Binary => "executable",
+                PackageFormat::Oci => "OCI image",
+            },
+            target
+        );
+
+        let builder = ExecutableBuilder::new();
+        let build_result = builder
+            .build_from_data_with_format(&migration_data, &self.output, target, package_format)
+            .into_diagnostic()
+            .wrap_err("Failed to build migration")?;
+
+        // Record migration if requested
+        if self.record {
+            backend
+                .record_migration(&result.migration, &target_state)
+                .await
+                .into_diagnostic()
+                .wrap_err("Failed to record migration")?;
+
+            println!("Migration recorded to state backend.");
+        }
+
+        // Build output
+        let manifest_digest = match &build_result {
+            PackagedBuildResult::Oci(r) => Some(r.manifest_digest.clone()),
+            PackagedBuildResult::Binary(_) => None,
+        };
+
+        let build_output = BuildOutput {
+            migration_id: result.migration_id(),
+            description: self.description,
+            statement_count: result.statement_count(),
+            output_format: package_format.to_string(),
+            output_path: build_result.output_path().display().to_string(),
+            target: target.to_string(),
+            manifest_digest,
+        };
+
+        // Output results
+        match self.format {
+            OutputFormat::Text => println!("{}", build_output),
+            OutputFormat::Json => print_json(&build_output),
+            OutputFormat::Sql => {
+                for stmt in &result.compilation.statements {
+                    println!("{};", stmt.sql);
+                    println!();
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 /// Build output for JSON format.
 #[derive(Debug, Clone, Serialize)]
 pub struct BuildOutput {
@@ -111,211 +293,6 @@ impl std::fmt::Display for BuildOutput {
 
         Ok(())
     }
-}
-
-/// Runs the build command.
-///
-/// Builds a migration executable or OCI image by comparing the current state
-/// to the live database.
-///
-/// # Arguments
-///
-/// * `database_url` - PostgreSQL connection string
-/// * `schema` - Database schema name
-/// * `output` - Output path for the built artifact
-/// * `description` - Migration description
-/// * `target` - Target platform for compilation
-/// * `package_format` - Output format (binary or oci)
-/// * `record` - Whether to record the migration to the state backend
-/// * `format` - CLI output format
-/// * `state_path` - Optional path to the state directory
-/// * `allow_drift` - Whether to allow build when drift is detected
-#[allow(clippy::too_many_arguments)]
-pub async fn run_build(
-    database_url: &str,
-    schema: &str,
-    output: PathBuf,
-    description: &str,
-    target: &str,
-    package_format: &str,
-    record: bool,
-    format: OutputFormat,
-    state_path: Option<&std::path::Path>,
-    allow_drift: bool,
-) -> miette::Result<()> {
-    // Parse target
-    let target = Target::from_str_name(target).ok_or_else(|| {
-        miette!(
-            "Invalid target: '{}'. Valid targets: native, x86_64-linux-gnu, x86_64-linux-musl, x86_64-macos, aarch64-macos, x86_64-windows",
-            target
-        )
-    })?;
-
-    // Parse package format
-    let package_format = PackageFormat::from_str_name(package_format).ok_or_else(|| {
-        miette!(
-            "Invalid format: '{}'. Valid formats: binary, oci",
-            package_format
-        )
-    })?;
-
-    // Load the state backend
-    let backend = load_backend(state_path);
-    ensure_backend_initialized(&backend).await?;
-
-    // Get current state from backend
-    let source_state = backend
-        .get_current_state()
-        .await
-        .into_diagnostic()
-        .wrap_err("Failed to load current state from backend")?;
-
-    // Connect to database and load target state
-    println!("Connecting to database...");
-
-    let client = db::connect(database_url)
-        .await
-        .into_diagnostic()
-        .wrap_err("Failed to connect to database")?;
-
-    let catalog = PostgresCatalog::new(&client);
-
-    println!("Loading schema '{}'...", schema);
-
-    let target_state = crate::db::query::load_namespace(&catalog, schema)
-        .await
-        .into_diagnostic()
-        .wrap_err_with(|| format!("Failed to load schema '{}'", schema))?;
-
-    // Check for schema drift before building
-    let source_hash = StateHash::from_namespace(&source_state);
-    let target_hash = StateHash::from_namespace(&target_state);
-
-    if source_hash != target_hash && !allow_drift {
-        // Schema drift detected - warn the user
-        let drift_summary = compute_drift_summary(&source_state, &target_state);
-
-        return Err(miette!(
-            help = "Run 'tern verify' to see detailed drift information.\n\
-                    To proceed anyway, use --allow-drift to explicitly capture the drift.",
-            "Schema drift detected between state backend and database.\n\n\
-             The database has been modified outside of Tern migrations.\n\n\
-             {}\n\n\
-             Building now would create an artifact that captures these untracked changes.",
-            drift_summary
-        ));
-    }
-
-    if source_hash != target_hash && allow_drift {
-        println!("WARNING: Schema drift detected. Proceeding with --allow-drift.");
-    }
-
-    // Compile the migration
-    println!("Compiling migration...");
-
-    let options = CompileOptions::new(description).with_target(target);
-    let result = compile_migration(&source_state, &target_state, options).into_diagnostic()?;
-
-    // Create migration data for the executable builder
-    let now = Zoned::now();
-    let migration_data = MigrationData {
-        id: result.migration_id(),
-        description: description.to_string(),
-        source_state_hash: result.source_hash.to_hex(),
-        target_state_hash: result.target_hash.to_hex(),
-        compiled_at: now.strftime("%Y-%m-%dT%H:%M:%SZ").to_string(),
-        statements: result
-            .compilation
-            .statements
-            .iter()
-            .enumerate()
-            .map(|(i, s)| StatementData {
-                description: s.description.clone(),
-                sql: s.sql.clone(),
-                sequence: (i + 1) as u32,
-            })
-            .collect(),
-        breaking_changes: result
-            .compilation
-            .breaking_changes
-            .iter()
-            .map(|bc| BreakingChangeData {
-                description: bc.description.clone(),
-                mitigation: match bc.mitigation {
-                    crate::db::diff::breaking::MitigationStrategy::DualWrite => {
-                        MitigationStrategy::DualWrite
-                    }
-                    crate::db::diff::breaking::MitigationStrategy::Backfill => {
-                        MitigationStrategy::Backfill
-                    }
-                    crate::db::diff::breaking::MitigationStrategy::Ratchet => {
-                        MitigationStrategy::Ratchet
-                    }
-                    crate::db::diff::breaking::MitigationStrategy::Destructive => {
-                        MitigationStrategy::Destructive
-                    }
-                },
-                affected_sql: bc.affected_sql.clone(),
-            })
-            .collect(),
-    };
-
-    // Build the executable or OCI image
-    println!(
-        "Building {} for {}...",
-        match package_format {
-            PackageFormat::Binary => "executable",
-            PackageFormat::Oci => "OCI image",
-        },
-        target
-    );
-
-    let builder = ExecutableBuilder::new();
-    let build_result = builder
-        .build_from_data_with_format(&migration_data, &output, target, package_format)
-        .into_diagnostic()
-        .wrap_err("Failed to build migration")?;
-
-    // Record migration if requested
-    if record {
-        backend
-            .record_migration(&result.migration, &target_state)
-            .await
-            .into_diagnostic()
-            .wrap_err("Failed to record migration")?;
-
-        println!("Migration recorded to state backend.");
-    }
-
-    // Build output
-    let manifest_digest = match &build_result {
-        PackagedBuildResult::Oci(r) => Some(r.manifest_digest.clone()),
-        PackagedBuildResult::Binary(_) => None,
-    };
-
-    let build_output = BuildOutput {
-        migration_id: result.migration_id(),
-        description: description.to_string(),
-        statement_count: result.statement_count(),
-        output_format: package_format.to_string(),
-        output_path: build_result.output_path().display().to_string(),
-        target: target.to_string(),
-        manifest_digest,
-    };
-
-    // Output results
-    match format {
-        OutputFormat::Text => println!("{}", build_output),
-        OutputFormat::Json => print_json(&build_output),
-        OutputFormat::Sql => {
-            for stmt in &result.compilation.statements {
-                println!("{};", stmt.sql);
-                println!();
-            }
-        }
-    }
-
-    Ok(())
 }
 
 /// Compute a brief summary of schema drift for error messages.

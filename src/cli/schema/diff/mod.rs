@@ -36,6 +36,89 @@ pub struct Diff {
     pub path: Option<PathBuf>,
 }
 
+impl Diff {
+    /// Dispatch the schema diff command.
+    pub async fn dispatch(self) -> miette::Result<()> {
+        anstream::eprintln!(
+            "WARNING: 'schema diff' is deprecated. Use 'tern check schema' instead."
+        );
+
+        let backend = load_backend(self.path.as_deref());
+        ensure_backend_initialized(&backend).await?;
+
+        // Load the source state (current state from migrations)
+        let source = backend.get_current_state().await.into_diagnostic()?;
+        let schema_name = source.name.as_ref().to_string();
+
+        // Determine schema file path
+        let schema_file = self.schema.unwrap_or_else(|| backend.schema_path());
+
+        // Verify the schema file exists
+        if !schema_file.exists() {
+            return Err(miette::miette!(
+                "Schema file not found: {}\n\nRun 'tern schema export' to generate the schema file first.",
+                schema_file.display()
+            ));
+        }
+
+        // Load the target state (edited schema file)
+        let target = SchemaLoader::load_file(&schema_file)
+            .await
+            .map_err(|e| miette::miette!("Failed to load schema file: {}", e))?;
+
+        // Generate diff
+        let diff = diff_namespaces(&source, &target);
+
+        // Analyze for breaking changes
+        let analysis = analyze_breaking_changes(&diff);
+
+        // Generate migration plan
+        let plan = MigrationPlan::from_diff(&diff);
+
+        // Render to SQL for display
+        let renderer = PostgresRenderer::new(RenderConfig::default());
+        let script = plan.render(&renderer);
+
+        // Build output
+        let breaking_changes: Vec<BreakingChangeOutput> =
+            analysis.iter().map(BreakingChangeOutput::from).collect();
+
+        let destructive_count = analysis.count_by_mitigation(MitigationStrategy::Destructive);
+
+        let operations: Vec<String> = script
+            .descriptions()
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        let output = SchemaDiffOutput {
+            schema: schema_name,
+            operation_count: plan.len(),
+            breaking_change_count: analysis.len(),
+            destructive_change_count: destructive_count,
+            is_empty: plan.is_empty(),
+            operations,
+            breaking_changes,
+            sql: Some(script.to_sql()),
+        };
+
+        // Output based on format
+        match self.format {
+            OutputFormat::Text => println!("{}", output),
+            OutputFormat::Json => print_json(&output),
+            OutputFormat::Sql => {
+                if plan.is_empty() {
+                    println!("-- No changes detected.");
+                } else {
+                    println!("{}", script.to_sql());
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 /// Output structure for schema diff JSON format.
 #[derive(Debug, Serialize)]
 pub struct SchemaDiffOutput {
@@ -114,87 +197,6 @@ impl std::fmt::Display for SchemaDiffOutput {
 
         Ok(())
     }
-}
-
-/// Runs the schema diff command.
-pub async fn run_schema_diff(
-    schema_path: Option<PathBuf>,
-    state_path: Option<&std::path::Path>,
-    format: OutputFormat,
-) -> miette::Result<()> {
-    let backend = load_backend(state_path);
-    ensure_backend_initialized(&backend).await?;
-
-    // Load the source state (current state from migrations)
-    let source = backend.get_current_state().await.into_diagnostic()?;
-    let schema_name = source.name.as_ref().to_string();
-
-    // Determine schema file path
-    let schema_file = schema_path.unwrap_or_else(|| backend.schema_path());
-
-    // Verify the schema file exists
-    if !schema_file.exists() {
-        return Err(miette::miette!(
-            "Schema file not found: {}\n\nRun 'tern schema export' to generate the schema file first.",
-            schema_file.display()
-        ));
-    }
-
-    // Load the target state (edited schema file)
-    let target = SchemaLoader::load_file(&schema_file)
-        .await
-        .map_err(|e| miette::miette!("Failed to load schema file: {}", e))?;
-
-    // Generate diff
-    let diff = diff_namespaces(&source, &target);
-
-    // Analyze for breaking changes
-    let analysis = analyze_breaking_changes(&diff);
-
-    // Generate migration plan
-    let plan = MigrationPlan::from_diff(&diff);
-
-    // Render to SQL for display
-    let renderer = PostgresRenderer::new(RenderConfig::default());
-    let script = plan.render(&renderer);
-
-    // Build output
-    let breaking_changes: Vec<BreakingChangeOutput> =
-        analysis.iter().map(BreakingChangeOutput::from).collect();
-
-    let destructive_count = analysis.count_by_mitigation(MitigationStrategy::Destructive);
-
-    let operations: Vec<String> = script
-        .descriptions()
-        .into_iter()
-        .map(String::from)
-        .collect();
-
-    let output = SchemaDiffOutput {
-        schema: schema_name,
-        operation_count: plan.len(),
-        breaking_change_count: analysis.len(),
-        destructive_change_count: destructive_count,
-        is_empty: plan.is_empty(),
-        operations,
-        breaking_changes,
-        sql: Some(script.to_sql()),
-    };
-
-    // Output based on format
-    match format {
-        OutputFormat::Text => println!("{}", output),
-        OutputFormat::Json => print_json(&output),
-        OutputFormat::Sql => {
-            if plan.is_empty() {
-                println!("-- No changes detected.");
-            } else {
-                println!("{}", script.to_sql());
-            }
-        }
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]

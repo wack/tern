@@ -1,6 +1,7 @@
 pub mod checksum;
 pub mod compile;
 pub mod diff;
+pub mod execution;
 pub mod history;
 pub mod migrate;
 pub mod model;

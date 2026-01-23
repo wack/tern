@@ -32,6 +32,75 @@ pub struct Export {
     pub path: Option<PathBuf>,
 }
 
+impl Export {
+    /// Dispatch the schema export command.
+    pub async fn dispatch(self) -> miette::Result<()> {
+        let backend = load_backend(self.path.as_deref());
+        ensure_backend_initialized(&backend).await?;
+
+        // Load the current schema state
+        let namespace = backend.get_current_state().await.into_diagnostic()?;
+
+        // Generate the SQL DDL
+        let sql = SchemaExporter::export(&namespace);
+
+        // Determine output location
+        let output_path = self.output.unwrap_or_else(|| backend.schema_path());
+
+        // Write to file or stdout
+        if output_path == std::path::Path::new("-") {
+            // Write to stdout
+            match self.format {
+                OutputFormat::Sql | OutputFormat::Text => {
+                    println!("{sql}");
+                }
+                OutputFormat::Json => {
+                    // For JSON format, wrap in a structured output
+                    let output = SchemaExportOutput {
+                        schema: namespace.name.as_ref().to_string(),
+                        sql: sql.clone(),
+                        path: None,
+                    };
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&output).into_diagnostic()?
+                    );
+                }
+            }
+        } else {
+            // Write to file
+            std::fs::write(&output_path, &sql)
+                .into_diagnostic()
+                .map_err(|e| miette::miette!("Failed to write schema file: {}", e))?;
+
+            match self.format {
+                OutputFormat::Text | OutputFormat::Sql => {
+                    println!("Schema exported to: {}", output_path.display());
+                    println!();
+                    println!("Schema: {}", namespace.name.as_ref());
+                    println!("Tables: {}", namespace.tables.len());
+                    println!("Views: {}", namespace.views.len());
+                    println!("Sequences: {}", namespace.sequences.len());
+                    println!("Enums: {}", namespace.enums.len());
+                }
+                OutputFormat::Json => {
+                    let output = SchemaExportOutput {
+                        schema: namespace.name.as_ref().to_string(),
+                        sql,
+                        path: Some(output_path.to_string_lossy().to_string()),
+                    };
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&output).into_diagnostic()?
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 /// Output structure for JSON format.
 #[derive(Debug, serde::Serialize)]
 pub struct SchemaExportOutput {
@@ -41,77 +110,6 @@ pub struct SchemaExportOutput {
     pub sql: String,
     /// The path where the schema was written (None if stdout).
     pub path: Option<String>,
-}
-
-/// Runs the schema export command.
-pub async fn run_schema_export(
-    output: Option<PathBuf>,
-    state_path: Option<&std::path::Path>,
-    format: OutputFormat,
-) -> miette::Result<()> {
-    let backend = load_backend(state_path);
-    ensure_backend_initialized(&backend).await?;
-
-    // Load the current schema state
-    let namespace = backend.get_current_state().await.into_diagnostic()?;
-
-    // Generate the SQL DDL
-    let sql = SchemaExporter::export(&namespace);
-
-    // Determine output location
-    let output_path = output.unwrap_or_else(|| backend.schema_path());
-
-    // Write to file or stdout
-    if output_path == std::path::Path::new("-") {
-        // Write to stdout
-        match format {
-            OutputFormat::Sql | OutputFormat::Text => {
-                println!("{sql}");
-            }
-            OutputFormat::Json => {
-                // For JSON format, wrap in a structured output
-                let output = SchemaExportOutput {
-                    schema: namespace.name.as_ref().to_string(),
-                    sql: sql.clone(),
-                    path: None,
-                };
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&output).into_diagnostic()?
-                );
-            }
-        }
-    } else {
-        // Write to file
-        std::fs::write(&output_path, &sql)
-            .into_diagnostic()
-            .map_err(|e| miette::miette!("Failed to write schema file: {}", e))?;
-
-        match format {
-            OutputFormat::Text | OutputFormat::Sql => {
-                println!("Schema exported to: {}", output_path.display());
-                println!();
-                println!("Schema: {}", namespace.name.as_ref());
-                println!("Tables: {}", namespace.tables.len());
-                println!("Views: {}", namespace.views.len());
-                println!("Sequences: {}", namespace.sequences.len());
-                println!("Enums: {}", namespace.enums.len());
-            }
-            OutputFormat::Json => {
-                let output = SchemaExportOutput {
-                    schema: namespace.name.as_ref().to_string(),
-                    sql,
-                    path: Some(output_path.to_string_lossy().to_string()),
-                };
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&output).into_diagnostic()?
-                );
-            }
-        }
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
