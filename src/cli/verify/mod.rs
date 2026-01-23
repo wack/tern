@@ -3,7 +3,10 @@
 //! This command verifies that the state backend matches the current
 //! database schema, detecting any drift from manual changes.
 
+use std::path::PathBuf;
+
 use anstream::println;
+use clap::Args;
 use miette::{Context, IntoDiagnostic};
 use serde::Serialize;
 
@@ -15,6 +18,44 @@ use crate::db::query::PostgresCatalog;
 use crate::db::schema::{ColumnName, ConstraintName, IndexName, SequenceName, TableName, TypeName};
 use crate::db::state::{StateBackend, StateHash};
 use crate::db::{self};
+
+/// Verify state backend matches database
+///
+/// Compares the state backend to the live database schema and
+/// reports any drift (manual changes not captured in migrations).
+#[derive(Debug, Clone, Args)]
+pub struct Verify {
+    /// PostgreSQL connection string
+    #[arg(long, env = "DATABASE_URL")]
+    pub database_url: String,
+
+    /// The database schema to verify
+    #[arg(long, default_value = "public")]
+    pub schema: String,
+
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+
+    /// Path to the state directory
+    #[arg(long)]
+    pub path: Option<PathBuf>,
+}
+
+/// Verify migration chain integrity
+///
+/// Checks that all migrations in the state backend have valid
+/// parent-child relationships (chain integrity).
+#[derive(Debug, Clone, Args)]
+pub struct VerifyChain {
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+
+    /// Path to the state directory
+    #[arg(long)]
+    pub path: Option<PathBuf>,
+}
 
 /// Verify output for JSON format.
 #[derive(Debug, Clone, Serialize)]

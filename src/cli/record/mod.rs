@@ -13,14 +13,38 @@
 //! exists may create inconsistencies between the recorded state and the actual
 //! database schema.
 
-use anstream::println;
 use std::path::PathBuf;
 
+use anstream::println;
+use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use serde::Serialize;
 
 use super::{OutputFormat, ensure_backend_initialized, load_backend, print_json};
 use crate::db::state::{Migration, MigrationId, StateBackend, StateHash};
+
+/// Record a migration as applied
+///
+/// Marks a migration as applied in the state backend without
+/// executing it. Useful for synchronizing state backends.
+#[derive(Debug, Clone, Args)]
+pub struct Record {
+    /// Migration ID to record (if already in backend)
+    #[arg(long)]
+    pub migration_id: Option<String>,
+
+    /// Path to a migration JSON file
+    #[arg(long)]
+    pub migration_file: Option<PathBuf>,
+
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+
+    /// Path to the state directory
+    #[arg(long)]
+    pub path: Option<PathBuf>,
+}
 
 /// Record output for JSON format.
 #[derive(Debug, Clone, Serialize)]
