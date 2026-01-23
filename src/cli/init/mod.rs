@@ -3,6 +3,7 @@
 //! This command initializes a new Tern project with state backend, either
 //! from an existing database or with an empty schema.
 
+use anstream::println;
 use miette::{Context, IntoDiagnostic, miette};
 
 use crate::db::query::PostgresCatalog;

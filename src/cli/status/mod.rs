@@ -3,6 +3,7 @@
 //! This command displays the current state of the migration backend,
 //! including migration count, current state hash, and last migration info.
 
+use anstream::println;
 use miette::{IntoDiagnostic, miette};
 use serde::Serialize;
 

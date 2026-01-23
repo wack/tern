@@ -3,6 +3,7 @@
 //! This command inspects migration source files or JSON migration files
 //! to display their contents and metadata.
 
+use anstream::println;
 use std::path::PathBuf;
 
 use miette::{Context, IntoDiagnostic, miette};

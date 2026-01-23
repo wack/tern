@@ -3,6 +3,7 @@
 //! This command compiles a migration by comparing the current state backend
 //! to the live database and generating migration SQL.
 
+use anstream::println;
 use std::path::PathBuf;
 
 use miette::{Context, IntoDiagnostic, miette};

@@ -2,6 +2,7 @@
 //!
 //! This command displays detailed information about a specific migration.
 
+use anstream::println;
 use miette::{Context, IntoDiagnostic, miette};
 use serde::Serialize;
 

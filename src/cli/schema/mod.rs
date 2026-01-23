@@ -3,6 +3,7 @@
 //! This module implements commands for working with the schema DDL file,
 //! which is the foundation of the model-first migration workflow.
 
+use anstream::println;
 use std::path::PathBuf;
 
 use miette::IntoDiagnostic;
@@ -126,6 +127,7 @@ struct SchemaExportOutput {
 
 #[cfg(feature = "pglite")]
 mod pglite_commands {
+    use anstream::{eprintln, println};
     use std::io::{self, Write};
     use std::path::PathBuf;
 

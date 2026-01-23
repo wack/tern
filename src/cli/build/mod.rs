@@ -3,6 +3,7 @@
 //! This command builds a migration executable or OCI image from the compiled
 //! migration state.
 
+use anstream::println;
 use std::path::PathBuf;
 
 use jiff::Zoned;
