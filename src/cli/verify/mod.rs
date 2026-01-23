@@ -12,7 +12,7 @@ use crate::db::diff::{NamespaceDiff, diff_namespaces};
 use crate::db::model::Namespace;
 use crate::db::query::PostgresCatalog;
 use crate::db::schema::{ColumnName, ConstraintName, IndexName, SequenceName, TableName, TypeName};
-use crate::db::state::{StateBackend, StateHash, verify_state};
+use crate::db::state::{StateBackend, StateHash};
 use crate::db::{self};
 
 /// Verify output for JSON format.
@@ -394,38 +394,38 @@ pub async fn run_verify(
 
     println!("Verifying schema '{}'...", schema);
 
-    // Verify state
-    let matches = verify_state(&backend, &catalog, schema)
-        .await
-        .into_diagnostic()?;
+    // Get cached state (includes pre-computed xxhash3 checksum)
+    let cached_state = backend.get_cached_state().into_diagnostic()?;
+    let backend_checksum = cached_state.checksum().to_string();
+    let backend_state = cached_state.into_namespace();
 
-    // Get state and compute hashes
-    let backend_state = backend.get_current_state().await.into_diagnostic()?;
+    // Load database state and compute its checksum
     let database_state = crate::db::query::load_namespace(&catalog, schema)
         .await
         .into_diagnostic()?;
+    let database_checksum = compute_schema_checksum(&database_state);
 
+    // Quick check using checksums first
+    let checksums_match = backend_checksum == database_checksum;
+
+    // Compute BLAKE3 state hashes for display
     let backend_hash = StateHash::from_namespace(&backend_state);
     let database_hash = StateHash::from_namespace(&database_state);
 
-    // Compute xxhash3 checksums
-    let backend_checksum = compute_schema_checksum(&backend_state);
-    let database_checksum = compute_schema_checksum(&database_state);
-
-    // Compute drift details if not matching
-    let drift_details = if !matches {
+    // Compute drift details if checksums don't match
+    let drift_details = if !checksums_match {
         Some(compute_drift(&backend_state, &database_state))
     } else {
         None
     };
 
     let output = VerifyOutput {
-        verified: matches,
+        verified: checksums_match,
         backend_state_hash: backend_hash.to_hex(),
         database_state_hash: database_hash.to_hex(),
         backend_schema_checksum: backend_checksum,
         database_schema_checksum: database_checksum,
-        message: if matches {
+        message: if checksums_match {
             "State backend is in sync with database.".to_string()
         } else {
             "Database has been modified outside of Tern migrations.".to_string()
@@ -439,7 +439,7 @@ pub async fn run_verify(
     }
 
     // Return error if verification failed (for CI usage)
-    if !matches {
+    if !checksums_match {
         std::process::exit(1);
     }
 
