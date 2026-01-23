@@ -142,6 +142,14 @@ pub enum CliCommand {
         /// Path to the state directory
         #[arg(long)]
         state_path: Option<PathBuf>,
+
+        /// Allow compilation when schema drift is detected
+        ///
+        /// By default, compile will refuse to proceed if the database schema
+        /// has drifted from the state backend (indicating manual changes).
+        /// Use this flag to explicitly acknowledge and capture the drift.
+        #[arg(long)]
+        allow_drift: bool,
     },
 
     /// Build a migration executable or OCI image
@@ -184,6 +192,14 @@ pub enum CliCommand {
         /// Path to the state directory
         #[arg(long)]
         state_path: Option<PathBuf>,
+
+        /// Allow build when schema drift is detected
+        ///
+        /// By default, build will refuse to proceed if the database schema
+        /// has drifted from the state backend (indicating manual changes).
+        /// Use this flag to explicitly acknowledge and capture the drift.
+        #[arg(long)]
+        allow_drift: bool,
     },
 
     /// List migration history
@@ -406,6 +422,7 @@ impl CliCommand {
                 show_sql,
                 format,
                 state_path,
+                allow_drift,
             } => {
                 commands::run_compile(
                     &database_url,
@@ -418,6 +435,7 @@ impl CliCommand {
                     show_sql,
                     format,
                     state_path.as_deref(),
+                    allow_drift,
                 )
                 .await
             }
@@ -431,6 +449,7 @@ impl CliCommand {
                 record,
                 format,
                 state_path,
+                allow_drift,
             } => {
                 commands::run_build(
                     &database_url,
@@ -442,6 +461,7 @@ impl CliCommand {
                     record,
                     format,
                     state_path.as_deref(),
+                    allow_drift,
                 )
                 .await
             }

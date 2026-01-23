@@ -15,7 +15,7 @@ use crate::db::compile::{
     PackageFormat, PackagedBuildResult, StatementData, Target, compile_migration,
 };
 use crate::db::query::PostgresCatalog;
-use crate::db::state::StateBackend;
+use crate::db::state::{StateBackend, StateHash};
 use crate::db::{self};
 
 /// Build output for JSON format.
@@ -76,6 +76,7 @@ impl std::fmt::Display for BuildOutput {
 /// * `record` - Whether to record the migration to the state backend
 /// * `format` - CLI output format
 /// * `state_path` - Optional path to the state directory
+/// * `allow_drift` - Whether to allow build when drift is detected
 #[allow(clippy::too_many_arguments)]
 pub async fn run_build(
     database_url: &str,
@@ -87,6 +88,7 @@ pub async fn run_build(
     record: bool,
     format: OutputFormat,
     state_path: Option<&std::path::Path>,
+    allow_drift: bool,
 ) -> miette::Result<()> {
     // Parse target
     let target = Target::from_str_name(target).ok_or_else(|| {
@@ -131,6 +133,29 @@ pub async fn run_build(
         .await
         .into_diagnostic()
         .wrap_err_with(|| format!("Failed to load schema '{}'", schema))?;
+
+    // Check for schema drift before building
+    let source_hash = StateHash::from_namespace(&source_state);
+    let target_hash = StateHash::from_namespace(&target_state);
+
+    if source_hash != target_hash && !allow_drift {
+        // Schema drift detected - warn the user
+        let drift_summary = compute_drift_summary(&source_state, &target_state);
+
+        return Err(miette!(
+            help = "Run 'tern verify' to see detailed drift information.\n\
+                    To proceed anyway, use --allow-drift to explicitly capture the drift.",
+            "Schema drift detected between state backend and database.\n\n\
+             The database has been modified outside of Tern migrations.\n\n\
+             {}\n\n\
+             Building now would create an artifact that captures these untracked changes.",
+            drift_summary
+        ));
+    }
+
+    if source_hash != target_hash && allow_drift {
+        println!("WARNING: Schema drift detected. Proceeding with --allow-drift.");
+    }
 
     // Compile the migration
     println!("Compiling migration...");
@@ -238,6 +263,56 @@ pub async fn run_build(
     }
 
     Ok(())
+}
+
+/// Compute a brief summary of schema drift for error messages.
+fn compute_drift_summary(
+    source: &crate::db::model::Namespace,
+    target: &crate::db::model::Namespace,
+) -> String {
+    use crate::db::diff::diff_namespaces;
+
+    let diff = diff_namespaces(source, target);
+
+    let mut parts = Vec::new();
+
+    let tables_added = diff.tables.added.len();
+    let tables_removed = diff.tables.removed.len();
+    let tables_modified = diff.tables.modified.len();
+
+    if tables_added > 0 {
+        parts.push(format!("{} table(s) added", tables_added));
+    }
+    if tables_removed > 0 {
+        parts.push(format!("{} table(s) removed", tables_removed));
+    }
+    if tables_modified > 0 {
+        parts.push(format!("{} table(s) modified", tables_modified));
+    }
+
+    let views_changed =
+        diff.views.added.len() + diff.views.removed.len() + diff.views.modified.len();
+    if views_changed > 0 {
+        parts.push(format!("{} view(s) changed", views_changed));
+    }
+
+    let sequences_changed =
+        diff.sequences.added.len() + diff.sequences.removed.len() + diff.sequences.modified.len();
+    if sequences_changed > 0 {
+        parts.push(format!("{} sequence(s) changed", sequences_changed));
+    }
+
+    let enums_changed =
+        diff.enums.added.len() + diff.enums.removed.len() + diff.enums.modified.len();
+    if enums_changed > 0 {
+        parts.push(format!("{} enum(s) changed", enums_changed));
+    }
+
+    if parts.is_empty() {
+        "No structural changes detected (possible metadata-only drift)".to_string()
+    } else {
+        format!("Drift summary: {}", parts.join(", "))
+    }
 }
 
 #[cfg(test)]
