@@ -5,6 +5,13 @@
 //! - Recording externally applied migrations
 //! - Synchronizing state backends across environments
 //! - Manual state management
+//!
+//! # Schema Drift Warning
+//!
+//! Before using this command, ensure your database is in sync with the state
+//! backend by running `tern verify`. Recording migrations when schema drift
+//! exists may create inconsistencies between the recorded state and the actual
+//! database schema.
 
 use std::path::PathBuf;
 
