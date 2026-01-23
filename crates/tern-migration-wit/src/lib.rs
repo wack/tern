@@ -1,8 +1,9 @@
-//! WIT Interface Definitions for Tern Migration Components
+//! WIT Interface Definitions and Shared Utilities for Tern Migration Components
 //!
 //! This crate contains the WebAssembly Interface Types (WIT) definitions
 //! that specify the contract between compiled migration components and
-//! the Tern runtime.
+//! the Tern runtime, plus shared utilities that work in both native and
+//! WebAssembly contexts.
 //!
 //! # Overview
 //!
@@ -121,6 +122,9 @@ pub const MIGRATION_DATA_WIT_DIR: &str = "tern-migration-data";
 
 /// Current version of the WIT interface.
 pub const WIT_VERSION: &str = "0.1.0";
+
+// Shared utilities that work in both native and WebAssembly contexts
+pub mod checksum;
 
 /// Package identifier for the migration interface.
 pub const WIT_PACKAGE: &str = "tern:migration@0.1.0";

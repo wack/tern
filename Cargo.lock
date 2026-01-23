@@ -3108,7 +3108,7 @@ dependencies = [
 
 [[package]]
 name = "tern"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "blake3",
@@ -3174,6 +3174,9 @@ dependencies = [
 [[package]]
 name = "tern-migration-wit"
 version = "0.1.0"
+dependencies = [
+ "twox-hash",
+]
 
 [[package]]
 name = "textwrap"
@@ -3531,6 +3534,12 @@ dependencies = [
  "tracing-log",
  "tracing-serde",
 ]
+
+[[package]]
+name = "twox-hash"
+version = "2.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ea3136b675547379c4bd395ca6b938e5ad3c3d20fad76e7fe85f9e0d011419c"
 
 [[package]]
 name = "typenum"
