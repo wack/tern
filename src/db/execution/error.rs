@@ -74,6 +74,30 @@ pub enum ExecutionError {
     #[error("query error: {0}")]
     #[diagnostic(code(tern::execution::query))]
     Query(String),
+
+    /// No migrations to revert.
+    #[error("no migrations have been applied to the database")]
+    #[diagnostic(
+        code(tern::execution::no_migrations_to_revert),
+        help("Run 'tern up' to apply migrations first before attempting to revert.")
+    )]
+    NoMigrationsToRevert,
+
+    /// Revert operation failed.
+    #[error("failed to revert migration {migration_id}: {message}")]
+    #[diagnostic(code(tern::execution::revert_failed))]
+    RevertFailed {
+        migration_id: String,
+        message: String,
+    },
+
+    /// Cannot revert baseline migration.
+    #[error("cannot revert baseline migration {0}")]
+    #[diagnostic(
+        code(tern::execution::cannot_revert_baseline),
+        help("The baseline migration represents the initial state and cannot be reverted.")
+    )]
+    CannotRevertBaseline(String),
 }
 
 /// Represents the result of applying a single migration.
