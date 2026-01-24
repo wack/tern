@@ -637,6 +637,7 @@ mod tests {
             Migration::new(
                 "Test migration",
                 vec![],
+                vec![],
                 StateHash::zero(),
                 StateHash::from_bytes([1u8; 32]),
                 vec![],
@@ -653,6 +654,7 @@ mod tests {
             let migration = Migration::new(
                 "Add users table",
                 ops.clone(),
+                vec![],
                 StateHash::zero(),
                 StateHash::from_bytes([1u8; 32]),
                 vec![],
@@ -777,6 +779,7 @@ mod tests {
             let migration = Migration::new(
                 "Drop users table",
                 ops.clone(),
+                vec![],
                 StateHash::zero(),
                 StateHash::from_bytes([1u8; 32]),
                 breaking_changes,
@@ -809,6 +812,7 @@ mod tests {
 
             let migration = Migration::new(
                 "Destructive changes",
+                vec![],
                 vec![],
                 StateHash::zero(),
                 StateHash::from_bytes([1u8; 32]),
@@ -927,6 +931,7 @@ mod tests {
             let migration = Migration::new(
                 "Test with 'quotes' and \"double quotes\"",
                 vec![],
+                vec![],
                 StateHash::zero(),
                 StateHash::from_bytes([1u8; 32]),
                 vec![],
@@ -950,8 +955,9 @@ mod tests {
             let compiler = MigrationCompiler::with_config(CompilerConfig::macro_only());
 
             // Create a migration with SQL containing special characters
-            let migration = Migration::new(
+            let _migration = Migration::new(
                 "Test SQL",
+                vec![],
                 vec![],
                 StateHash::zero(),
                 StateHash::from_bytes([1u8; 32]),
@@ -977,6 +983,7 @@ mod tests {
 
             let migration = Migration::new(
                 "Line 1\nLine 2\nLine 3",
+                vec![],
                 vec![],
                 StateHash::zero(),
                 StateHash::from_bytes([1u8; 32]),

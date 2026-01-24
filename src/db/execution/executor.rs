@@ -182,7 +182,7 @@ impl<'a> MigrationExecutor<'a> {
     ) -> Result<MigrationResult, ExecutionError> {
         // Render migration to SQL
         let renderer = PostgresRenderer::new(RenderConfig::default());
-        let plan = MigrationPlan::from_operations(migration.operations.clone());
+        let plan = MigrationPlan::from_operations(migration.up_operations.clone());
         let script = plan.render(&renderer);
         let sql = script.to_sql();
         let statement_count = script.all_statements().len();
@@ -250,16 +250,16 @@ impl<'a> MigrationExecutor<'a> {
     }
 }
 
-/// Computes the BLAKE3 hash of a migration's operations.
+/// Computes the BLAKE3 hash of a migration's up_operations.
 ///
 /// This hash is used to detect if a migration has been modified since it was
-/// applied. Only the operations array is hashed, not the description or
+/// applied. Only the up_operations array is hashed, not the description or
 /// timestamps, allowing descriptions to be updated without triggering
 /// divergence errors.
 fn compute_migration_hash(migration: &Migration) -> String {
     let mut hasher = blake3::Hasher::new();
     let ops_json =
-        serde_json::to_vec(&migration.operations).expect("operations should be serializable");
+        serde_json::to_vec(&migration.up_operations).expect("operations should be serializable");
     hasher.update(&ops_json);
     hasher.finalize().to_hex().to_string()
 }
@@ -273,14 +273,16 @@ mod tests {
     fn compute_migration_hash_is_deterministic() {
         let migration1 = Migration::new(
             "Test migration",
-            vec![],
+            vec![], // up_operations
+            vec![], // down_operations
             StateHash::zero(),
             StateHash::zero(),
             vec![],
         );
         let migration2 = Migration::new(
             "Different description", // Different description
-            vec![],                  // Same operations
+            vec![],                  // Same up_operations
+            vec![],                  // down_operations
             StateHash::zero(),
             StateHash::zero(),
             vec![],
@@ -289,7 +291,7 @@ mod tests {
         let hash1 = compute_migration_hash(&migration1);
         let hash2 = compute_migration_hash(&migration2);
 
-        // Hashes should be the same since only operations matter
+        // Hashes should be the same since only up_operations matter
         assert_eq!(hash1, hash2);
     }
 }

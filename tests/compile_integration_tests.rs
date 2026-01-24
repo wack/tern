@@ -778,6 +778,7 @@ mod low_level_api {
         let migration = Migration::new(
             "Create users table",
             plan.operations.clone(),
+            vec![],
             source_hash,
             target_hash,
             breaking_changes.into_changes(),
@@ -811,6 +812,7 @@ mod low_level_api {
         let migration = Migration::new(
             "Create users",
             plan.operations.clone(),
+            vec![],
             source_hash,
             target_hash,
             vec![],

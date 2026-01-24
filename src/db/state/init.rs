@@ -9,7 +9,7 @@
 #![allow(unused_assignments)]
 
 use crate::db::diff::diff_namespaces;
-use crate::db::migrate::MigrationPlan;
+use crate::db::migrate::{MigrationPlan, compute_inverse_operations};
 use crate::db::model::Namespace;
 use crate::db::query::{Catalog, QueryError, load_namespace};
 
@@ -118,8 +118,13 @@ where
     let diff = diff_namespaces(&empty, &namespace);
     let plan = MigrationPlan::from_diff(&diff);
 
+    // Compute inverse operations for the down migration
+    let inverse_result = compute_inverse_operations(&plan.operations);
+    let down_operations = inverse_result.operations;
+
     // Create and save baseline migration with operations
-    let baseline = Migration::baseline_with_operations(namespace.clone(), plan.operations);
+    let baseline =
+        Migration::baseline_with_operations(namespace.clone(), plan.operations, down_operations);
     backend.save_migration(&baseline).await?;
 
     // Save current state
@@ -252,7 +257,7 @@ mod tests {
         assert!(baseline.is_baseline());
         assert!(baseline.is_checkpoint());
         assert!(baseline.parent_state_hash.is_zero());
-        assert_eq!(baseline.operations.len(), 0);
+        assert_eq!(baseline.up_operations.len(), 0);
 
         // Verify backend state
         assert!(backend.is_initialized().await.unwrap());
@@ -307,8 +312,8 @@ mod tests {
         assert!(baseline.parent_state_hash.is_zero());
         assert!(baseline.is_checkpoint());
 
-        // NEW: Baseline now has operations to create the schema from scratch
-        assert!(!baseline.operations.is_empty());
+        // NEW: Baseline now has up_operations to create the schema from scratch
+        assert!(!baseline.up_operations.is_empty());
         // Should have at least one operation to create the table
         assert!(baseline.operation_count() >= 1);
 

@@ -184,10 +184,10 @@ fn inspect_json_migration(path: &PathBuf) -> miette::Result<InspectOutput> {
         .into_diagnostic()
         .wrap_err("Failed to parse migration JSON")?;
 
-    // Try to generate SQL from operations
-    let sql_statements = if !migration.operations.is_empty() {
+    // Try to generate SQL from up_operations
+    let sql_statements = if !migration.up_operations.is_empty() {
         use crate::db::migrate::{MigrationPlan, PostgresRenderer, RenderConfig};
-        let plan = MigrationPlan::from_operations(migration.operations.clone());
+        let plan = MigrationPlan::from_operations(migration.up_operations.clone());
         let renderer = PostgresRenderer::new(RenderConfig::default());
         let script = plan.render(&renderer);
         Some(

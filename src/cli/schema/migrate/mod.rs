@@ -14,7 +14,9 @@ use super::diff::BreakingChangeOutput;
 use crate::cli::{OutputFormat, ensure_backend_initialized, load_backend, print_json};
 use crate::db::diff::breaking::{MitigationStrategy, analyze_breaking_changes};
 use crate::db::diff::diff_namespaces;
-use crate::db::migrate::{MigrationPlan, PostgresRenderer, RenderConfig};
+use crate::db::migrate::{
+    MigrationPlan, PostgresRenderer, RenderConfig, compute_inverse_operations,
+};
 use crate::db::pglite::SchemaLoader;
 use crate::db::state::{Migration, StateBackend, StateHash};
 
@@ -146,10 +148,15 @@ impl Migrate {
         // Get the breaking changes for the migration
         let breaking_changes = analysis.into_changes();
 
+        // Compute inverse operations for the down migration
+        let inverse_result = compute_inverse_operations(&plan.operations);
+        let down_operations = inverse_result.operations;
+
         // Create the migration
         let migration = Migration::new(
             &self.description,
             plan.operations.clone(),
+            down_operations,
             source_hash,
             target_hash,
             breaking_changes.clone(),
@@ -164,7 +171,7 @@ impl Migrate {
         let output = SchemaMigrateOutput {
             migration_id: migration.id.to_hex(),
             description: self.description.clone(),
-            operation_count: migration.operations.len(),
+            operation_count: migration.up_operations.len(),
             has_breaking_changes: !breaking_changes.is_empty(),
             has_destructive_changes: destructive_count > 0,
             source_state_hash: source_hash.to_hex(),

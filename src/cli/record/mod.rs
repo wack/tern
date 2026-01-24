@@ -95,10 +95,10 @@ impl Record {
             let new_state = if let Some(ref state) = migration.checkpoint_state {
                 state.clone()
             } else {
-                // We need to apply the operations to the current state
+                // We need to apply the up_operations to the current state
                 let current_state = backend.get_current_state().await.into_diagnostic()?;
                 current_state
-                    .apply(&migration.operations)
+                    .apply(&migration.up_operations)
                     .into_diagnostic()
                     .wrap_err("Failed to apply migration operations")?
             };
@@ -205,7 +205,15 @@ pub fn create_sync_migration(
     parent_hash: StateHash,
     resulting_hash: StateHash,
 ) -> Migration {
-    Migration::new(description, vec![], parent_hash, resulting_hash, vec![])
+    // Sync migrations have no operations, so they're trivially reversible
+    Migration::new(
+        description,
+        vec![],
+        vec![],
+        parent_hash,
+        resulting_hash,
+        vec![],
+    )
 }
 
 #[cfg(test)]
@@ -260,6 +268,7 @@ mod tests {
         let ns = Namespace::empty("public");
         let migration = Migration::new(
             "Test migration",
+            vec![],
             vec![],
             current_hash,
             StateHash::from_bytes([1u8; 32]),

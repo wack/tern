@@ -12,7 +12,9 @@ use serde::Serialize;
 use crate::cli::{OutputFormat, ensure_backend_initialized, load_backend, print_json};
 use crate::db::diff::breaking::analyze_breaking_changes;
 use crate::db::diff::diff_namespaces;
-use crate::db::migrate::{MigrationPlan, PostgresRenderer, RenderConfig};
+use crate::db::migrate::{
+    MigrationPlan, PostgresRenderer, RenderConfig, compute_inverse_operations,
+};
 use crate::db::query::{PostgresCatalog, load_namespace};
 use crate::db::state::{Migration, StateBackend, StateHash};
 use crate::db::{self};
@@ -256,9 +258,14 @@ impl Import {
         let source_hash = StateHash::from_namespace(&expected_schema);
         let target_hash = StateHash::from_namespace(&live_schema);
 
+        // Compute inverse operations for the down migration
+        let inverse_result = compute_inverse_operations(&plan.operations);
+        let down_operations = inverse_result.operations;
+
         let migration = Migration::new(
             &self.description,
             plan.operations.clone(),
+            down_operations,
             source_hash,
             target_hash,
             breaking_changes,
@@ -280,7 +287,7 @@ impl Import {
             has_changes: true,
             migration_id,
             description: self.description,
-            operation_count: migration.operations.len(),
+            operation_count: migration.up_operations.len(),
             dry_run: self.dry_run,
             summary,
         };

@@ -1,6 +1,7 @@
 //! Migrate down command.
 //!
-//! This command reverts the most recently applied migration.
+//! This command reverts the most recently applied migration using the
+//! pre-computed down_operations stored in the migration file.
 
 use std::path::PathBuf;
 
@@ -11,7 +12,7 @@ use serde::Serialize;
 
 use crate::cli::{OutputFormat, ensure_backend_initialized, load_backend, print_json};
 use crate::db::execution::MigrationTracker;
-use crate::db::migrate::{MigrationPlan, Operation, PostgresRenderer, RenderConfig};
+use crate::db::migrate::{MigrationPlan, PostgresRenderer, RenderConfig};
 use crate::db::state::{Migration, StateBackend};
 use crate::db::{self};
 
@@ -68,7 +69,7 @@ pub struct RevertedMigrationInfo {
     pub id: String,
     /// Migration description.
     pub description: String,
-    /// Number of operations that were reverted.
+    /// Number of up operations in the migration.
     pub operation_count: usize,
     /// Number of SQL statements executed to revert.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -118,186 +119,6 @@ impl std::fmt::Display for DownOutput {
         }
 
         Ok(())
-    }
-}
-
-/// Computes the inverse operations needed to revert a migration.
-///
-/// Returns the operations in reverse order (last applied first reverted).
-fn compute_inverse_operations(operations: &[Operation]) -> Result<Vec<Operation>, String> {
-    let mut inverse_ops = Vec::new();
-
-    // Process operations in reverse order
-    for op in operations.iter().rev() {
-        let inverse = compute_single_inverse(op)?;
-        inverse_ops.push(inverse);
-    }
-
-    Ok(inverse_ops)
-}
-
-/// Computes the inverse of a single operation.
-fn compute_single_inverse(op: &Operation) -> Result<Operation, String> {
-    match op {
-        // Enum operations
-        Operation::CreateEnum { schema, enum_type } => Ok(Operation::DropEnum {
-            schema: schema.clone(),
-            name: enum_type.name.clone(),
-        }),
-        Operation::DropEnum { .. } => {
-            Err("Cannot revert DropEnum: enum definition is not preserved".to_string())
-        }
-        Operation::RenameEnum { schema, from, to } => Ok(Operation::RenameEnum {
-            schema: schema.clone(),
-            from: to.clone(),
-            to: from.clone(),
-        }),
-        Operation::AddEnumValue { .. } => Err(
-            "Cannot revert AddEnumValue: PostgreSQL does not support removing enum values"
-                .to_string(),
-        ),
-
-        // Sequence operations
-        Operation::CreateSequence { schema, sequence } => Ok(Operation::DropSequence {
-            schema: schema.clone(),
-            name: sequence.name.clone(),
-        }),
-        Operation::DropSequence { .. } => {
-            Err("Cannot revert DropSequence: sequence definition is not preserved".to_string())
-        }
-        Operation::RenameSequence { schema, from, to } => Ok(Operation::RenameSequence {
-            schema: schema.clone(),
-            from: to.clone(),
-            to: from.clone(),
-        }),
-        Operation::AlterSequence { .. } => {
-            Err("Cannot revert AlterSequence: previous values are not preserved".to_string())
-        }
-
-        // Table operations
-        Operation::CreateTable { schema, table } => Ok(Operation::DropTable {
-            schema: schema.clone(),
-            name: table.name.clone(),
-        }),
-        Operation::DropTable { .. } => {
-            Err("Cannot revert DropTable: table definition and data are not preserved".to_string())
-        }
-        Operation::RenameTable { schema, from, to } => Ok(Operation::RenameTable {
-            schema: schema.clone(),
-            from: to.clone(),
-            to: from.clone(),
-        }),
-
-        // Column operations
-        Operation::AddColumn {
-            schema,
-            table,
-            column,
-        } => Ok(Operation::DropColumn {
-            schema: schema.clone(),
-            table: table.clone(),
-            name: column.name.clone(),
-        }),
-        Operation::DropColumn { .. } => Err(
-            "Cannot revert DropColumn: column definition and data are not preserved".to_string(),
-        ),
-        Operation::RenameColumn {
-            schema,
-            table,
-            from,
-            to,
-        } => Ok(Operation::RenameColumn {
-            schema: schema.clone(),
-            table: table.clone(),
-            from: to.clone(),
-            to: from.clone(),
-        }),
-        Operation::AlterColumn { .. } => {
-            Err("Cannot revert AlterColumn: previous values are not preserved".to_string())
-        }
-
-        // Constraint operations
-        Operation::AddConstraint {
-            schema,
-            table,
-            constraint,
-        } => Ok(Operation::DropConstraint {
-            schema: schema.clone(),
-            table: table.clone(),
-            name: constraint.name.clone(),
-        }),
-        Operation::DropConstraint { .. } => {
-            Err("Cannot revert DropConstraint: constraint definition is not preserved".to_string())
-        }
-        Operation::RenameConstraint {
-            schema,
-            table,
-            from,
-            to,
-        } => Ok(Operation::RenameConstraint {
-            schema: schema.clone(),
-            table: table.clone(),
-            from: to.clone(),
-            to: from.clone(),
-        }),
-
-        // Index operations
-        Operation::CreateIndex {
-            schema,
-            index,
-            concurrently,
-            ..
-        } => Ok(Operation::DropIndex {
-            schema: schema.clone(),
-            name: index.name.clone(),
-            concurrently: *concurrently,
-        }),
-        Operation::DropIndex { .. } => {
-            Err("Cannot revert DropIndex: index definition is not preserved".to_string())
-        }
-        Operation::RenameIndex { schema, from, to } => Ok(Operation::RenameIndex {
-            schema: schema.clone(),
-            from: to.clone(),
-            to: from.clone(),
-        }),
-
-        // View operations
-        Operation::CreateView { schema, view } => Ok(Operation::DropView {
-            schema: schema.clone(),
-            name: view.name.clone(),
-            is_materialized: view.is_materialized,
-        }),
-        Operation::DropView { .. } => {
-            Err("Cannot revert DropView: view definition is not preserved".to_string())
-        }
-        Operation::RenameView {
-            schema,
-            from,
-            to,
-            is_materialized,
-        } => Ok(Operation::RenameView {
-            schema: schema.clone(),
-            from: to.clone(),
-            to: from.clone(),
-            is_materialized: *is_materialized,
-        }),
-        Operation::ReplaceView { .. } => {
-            Err("Cannot revert ReplaceView: previous view definition is not preserved".to_string())
-        }
-        Operation::RefreshMaterializedView { .. } => {
-            // Refreshing a materialized view is idempotent, so we can just skip it
-            // Return a no-op by creating a comment that won't change anything
-            // Actually, there's no true no-op, so we'll just error
-            Err(
-                "Cannot revert RefreshMaterializedView: this operation cannot be undone"
-                    .to_string(),
-            )
-        }
-
-        // Comment operations
-        Operation::SetComment { .. } => {
-            Err("Cannot revert SetComment: previous comment is not preserved".to_string())
-        }
     }
 }
 
@@ -371,29 +192,32 @@ impl Down {
             ));
         }
 
-        // Compute inverse operations
-        let inverse_ops = match compute_inverse_operations(&migration.operations) {
-            Ok(ops) => ops,
-            Err(msg) => {
-                let output = DownOutput {
-                    success: false,
-                    dry_run: self.dry_run,
-                    migration: Some(RevertedMigrationInfo {
-                        id: migration.id.to_hex(),
-                        description: migration.description.clone(),
-                        operation_count: migration.operations.len(),
-                        statement_count: None,
-                    }),
-                    error: Some(msg),
-                };
-                match self.format {
-                    OutputFormat::Text => println!("{}", output),
-                    OutputFormat::Json => print_json(&output),
-                    OutputFormat::Sql => println!("-- Cannot compute inverse operations"),
-                }
-                std::process::exit(1);
+        // Check if the migration is reversible (has pre-computed down_operations)
+        if !migration.is_reversible() {
+            let output = DownOutput {
+                success: false,
+                dry_run: self.dry_run,
+                migration: Some(RevertedMigrationInfo {
+                    id: migration.id.to_hex(),
+                    description: migration.description.clone(),
+                    operation_count: migration.up_operations.len(),
+                    statement_count: None,
+                }),
+                error: Some(
+                    "This migration contains irreversible operations and cannot be reverted."
+                        .to_string(),
+                ),
+            };
+            match self.format {
+                OutputFormat::Text => println!("{}", output),
+                OutputFormat::Json => print_json(&output),
+                OutputFormat::Sql => println!("-- Migration is not reversible"),
             }
-        };
+            std::process::exit(1);
+        }
+
+        // Use the pre-computed down_operations
+        let down_ops = migration.down_operations.clone();
 
         if self.dry_run {
             // Just show what would be reverted
@@ -403,7 +227,7 @@ impl Down {
                 migration: Some(RevertedMigrationInfo {
                     id: migration.id.to_hex(),
                     description: migration.description.clone(),
-                    operation_count: migration.operations.len(),
+                    operation_count: migration.up_operations.len(),
                     statement_count: None,
                 }),
                 error: None,
@@ -417,9 +241,9 @@ impl Down {
                         "-- Dry run: would revert migration {}",
                         migration.id.to_short_hex()
                     );
-                    // Render the inverse operations to show what SQL would be executed
+                    // Render the down operations to show what SQL would be executed
                     let renderer = PostgresRenderer::new(RenderConfig::default());
-                    let plan = MigrationPlan::from_operations(inverse_ops);
+                    let plan = MigrationPlan::from_operations(down_ops);
                     let script = plan.render(&renderer);
                     println!("{}", script.to_sql());
                 }
@@ -432,7 +256,7 @@ impl Down {
 
             // Render migration to SQL
             let renderer = PostgresRenderer::new(RenderConfig::default());
-            let plan = MigrationPlan::from_operations(inverse_ops);
+            let plan = MigrationPlan::from_operations(down_ops);
             let script = plan.render(&renderer);
             let sql = script.to_sql();
             let statement_count = script.all_statements().len();
@@ -451,7 +275,7 @@ impl Down {
                 return Err(miette::miette!("Failed to set search_path: {}", e));
             }
 
-            // Execute the inverse operations
+            // Execute the down operations
             if !sql.is_empty()
                 && let Err(e) = client.batch_execute(&sql).await
             {
@@ -462,7 +286,7 @@ impl Down {
                     migration: Some(RevertedMigrationInfo {
                         id: migration.id.to_hex(),
                         description: migration.description.clone(),
-                        operation_count: migration.operations.len(),
+                        operation_count: migration.up_operations.len(),
                         statement_count: Some(statement_count),
                     }),
                     error: Some(e.to_string()),
@@ -494,7 +318,7 @@ impl Down {
                 migration: Some(RevertedMigrationInfo {
                     id: migration.id.to_hex(),
                     description: migration.description.clone(),
-                    operation_count: migration.operations.len(),
+                    operation_count: migration.up_operations.len(),
                     statement_count: Some(statement_count),
                 }),
                 error: None,

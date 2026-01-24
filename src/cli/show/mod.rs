@@ -132,7 +132,7 @@ impl Show {
 
         // Generate SQL if needed
         let sql_statements = if matches!(self.format, OutputFormat::Sql) {
-            let plan = MigrationPlan::from_operations(migration.operations.clone());
+            let plan = MigrationPlan::from_operations(migration.up_operations.clone());
             let renderer = PostgresRenderer::new(RenderConfig::default());
             let script = plan.render(&renderer);
             Some(
