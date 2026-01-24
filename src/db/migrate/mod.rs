@@ -33,6 +33,7 @@
 
 mod collector;
 mod error;
+mod inverse;
 mod operation;
 mod ordering;
 mod plan;
@@ -41,6 +42,7 @@ mod script;
 
 pub use collector::{CollectorConfig, OperationCollector};
 pub use error::MigrationError;
+pub use inverse::{InverseError, InverseResult, compute_inverse_operations};
 pub use operation::{
     ColumnChanges, CommentTarget, DefaultChange, EnumValuePosition, GeneratedChange,
     IdentityChange, ObjectKind, Operation, OperationId, SequenceChanges, SetColumnType,

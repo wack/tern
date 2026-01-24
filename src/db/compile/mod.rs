@@ -219,7 +219,7 @@ impl std::fmt::Display for PackageFormat {
 
 use crate::db::diff::breaking::analyze_breaking_changes;
 use crate::db::diff::diff_namespaces;
-use crate::db::migrate::MigrationPlan;
+use crate::db::migrate::{MigrationPlan, compute_inverse_operations};
 use crate::db::model::Namespace;
 use crate::db::state::{Migration, StateHash};
 
@@ -399,10 +399,15 @@ pub fn compile_migration(
     let source_hash = StateHash::from_namespace(source);
     let target_hash = StateHash::from_namespace(target);
 
+    // Step 4.5: Compute inverse operations for down migration
+    let inverse_result = compute_inverse_operations(&plan.operations);
+    let down_operations = inverse_result.operations;
+
     // Step 5: Create the migration record
     let migration = Migration::new(
         &options.description,
         plan.operations.clone(),
+        down_operations,
         source_hash,
         target_hash,
         breaking_changes.into_changes(),
@@ -553,6 +558,7 @@ mod tests {
         let migration = Migration::new(
             "Add email column to users table",
             plan.operations.clone(),
+            vec![],
             source_hash,
             target_hash,
             vec![], // No breaking changes for adding nullable column
@@ -617,6 +623,7 @@ mod tests {
         let migration = Migration::new(
             "Drop users table",
             plan.operations.clone(),
+            vec![],
             source_hash,
             target_hash,
             breaking_changes.into_changes(),
@@ -682,6 +689,7 @@ mod tests {
         let migration = Migration::new(
             "Create users table with status enum",
             plan.operations.clone(),
+            vec![],
             source_hash,
             target_hash,
             vec![],
@@ -714,6 +722,7 @@ mod tests {
         let migration = Migration::new(
             r#"Add "quoted" column with 'single quotes' and \backslashes\"#,
             plan.operations.clone(),
+            vec![],
             source_hash,
             target_hash,
             vec![],
@@ -746,6 +755,7 @@ mod tests {
         let migration = Migration::new(
             "Empty migration",
             plan.operations.clone(),
+            vec![],
             source_hash,
             target_hash,
             vec![],

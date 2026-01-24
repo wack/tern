@@ -13,7 +13,9 @@ use serde::Serialize;
 use crate::cli::{OutputFormat, ensure_backend_initialized, load_backend, print_json};
 use crate::db::diff::breaking::{BreakingChange, MitigationStrategy, analyze_breaking_changes};
 use crate::db::diff::diff_namespaces;
-use crate::db::migrate::{MigrationPlan, PostgresRenderer, RenderConfig};
+use crate::db::migrate::{
+    MigrationPlan, PostgresRenderer, RenderConfig, compute_inverse_operations,
+};
 use crate::db::pglite::SchemaLoader;
 use crate::db::state::{Migration, StateBackend, StateHash};
 
@@ -70,6 +72,8 @@ pub struct GenerateOutput {
     /// Breaking changes with details.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub breaking_changes: Vec<BreakingChangeOutput>,
+    /// Whether the migration can be reversed with `down`.
+    pub is_reversible: bool,
 }
 
 /// Breaking change output for JSON serialization.
@@ -117,6 +121,11 @@ impl std::fmt::Display for GenerateOutput {
             "  To state:    {}",
             &self.target_state_hash[..16.min(self.target_state_hash.len())]
         )?;
+        writeln!(
+            f,
+            "  Reversible:  {}",
+            if self.is_reversible { "yes" } else { "no" }
+        )?;
 
         if self.has_breaking_changes {
             writeln!(f)?;
@@ -125,6 +134,12 @@ impl std::fmt::Display for GenerateOutput {
             for bc in &self.breaking_changes {
                 writeln!(f, "  [{}] {}", bc.mitigation, bc.description)?;
             }
+        }
+
+        if !self.is_reversible {
+            writeln!(f)?;
+            writeln!(f, "NOTE: This migration contains irreversible operations.")?;
+            writeln!(f, "      Running 'tern down' will not be possible.")?;
         }
 
         if self.dry_run {
@@ -195,6 +210,7 @@ impl Generate {
                         target_state_hash: target_hash.to_hex(),
                         dry_run: self.dry_run,
                         breaking_changes: vec![],
+                        is_reversible: true, // Empty migration is trivially reversible
                     };
                     print_json(&output);
                 }
@@ -232,10 +248,15 @@ impl Generate {
         // Get the breaking changes for the migration
         let breaking_changes = analysis.into_changes();
 
+        // Compute inverse operations for the down migration
+        let inverse_result = compute_inverse_operations(&plan.operations);
+        let down_operations = inverse_result.operations;
+
         // Create the migration
         let migration = Migration::new(
             &self.description,
             plan.operations.clone(),
+            down_operations,
             source_hash,
             target_hash,
             breaking_changes.clone(),
@@ -250,13 +271,14 @@ impl Generate {
         let output = GenerateOutput {
             migration_id: migration.id.to_hex(),
             description: self.description.clone(),
-            operation_count: migration.operations.len(),
+            operation_count: migration.up_operations.len(),
             has_breaking_changes: !breaking_changes.is_empty(),
             has_destructive_changes: destructive_count > 0,
             source_state_hash: source_hash.to_hex(),
             target_state_hash: target_hash.to_hex(),
             dry_run: self.dry_run,
             breaking_changes: breaking_change_outputs,
+            is_reversible: migration.is_reversible(),
         };
 
         // Record the migration (unless dry run)
@@ -308,6 +330,7 @@ mod tests {
             operation_count: 3,
             has_breaking_changes: false,
             has_destructive_changes: false,
+            is_reversible: true,
             source_state_hash: "0".repeat(64),
             target_state_hash: "1".repeat(64),
             dry_run: false,
@@ -328,6 +351,7 @@ mod tests {
             operation_count: 1,
             has_breaking_changes: false,
             has_destructive_changes: false,
+            is_reversible: true,
             source_state_hash: "0".repeat(64),
             target_state_hash: "1".repeat(64),
             dry_run: true,
@@ -346,6 +370,7 @@ mod tests {
             operation_count: 1,
             has_breaking_changes: false,
             has_destructive_changes: false,
+            is_reversible: true,
             source_state_hash: "src".to_string(),
             target_state_hash: "tgt".to_string(),
             dry_run: false,

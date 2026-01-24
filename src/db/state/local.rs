@@ -483,10 +483,10 @@ impl StateBackend for LocalFileBackend {
         // Find nearest checkpoint and apply operations
         let (mut state, start_idx) = self.find_nearest_checkpoint(&migrations, target_idx)?;
 
-        // Apply operations from checkpoint to target (exclusive of checkpoint migration itself
+        // Apply up_operations from checkpoint to target (exclusive of checkpoint migration itself
         // since its state is already included)
         for migration in &migrations[start_idx..=target_idx] {
-            state = state.apply(&migration.operations).map_err(|e| {
+            state = state.apply(&migration.up_operations).map_err(|e| {
                 StateError::ReconstructionFailed {
                     id: migration.id,
                     message: e.to_string(),
@@ -688,6 +688,7 @@ mod tests {
             let m2 = Migration::new(
                 "Second migration",
                 vec![],
+                vec![],
                 m1.resulting_state_hash,
                 test_state_hash(2),
                 vec![],
@@ -696,6 +697,7 @@ mod tests {
 
             let m3 = Migration::new(
                 "Third migration",
+                vec![],
                 vec![],
                 m2.resulting_state_hash,
                 test_state_hash(3),
@@ -735,7 +737,7 @@ mod tests {
 
             // After second migration
             let result_hash = test_state_hash(99);
-            let m2 = Migration::new("Second", vec![], expected_hash, result_hash, vec![]);
+            let m2 = Migration::new("Second", vec![], vec![], expected_hash, result_hash, vec![]);
             backend.save_migration(&m2).await.unwrap();
 
             assert_eq!(backend.get_current_state_hash().await.unwrap(), result_hash);
@@ -756,6 +758,7 @@ mod tests {
 
             let m2 = Migration::new(
                 "Second",
+                vec![],
                 vec![],
                 m1.resulting_state_hash,
                 test_state_hash(22),
@@ -790,6 +793,7 @@ mod tests {
             let m2 = Migration::new(
                 "Second",
                 vec![],
+                vec![],
                 m1.resulting_state_hash,
                 test_state_hash(22),
                 vec![],
@@ -816,6 +820,7 @@ mod tests {
             let m2 = Migration::new(
                 "Second",
                 vec![],
+                vec![],
                 m1.resulting_state_hash,
                 test_state_hash(22),
                 vec![],
@@ -824,6 +829,7 @@ mod tests {
 
             let m3 = Migration::new(
                 "Third",
+                vec![],
                 vec![],
                 m2.resulting_state_hash,
                 test_state_hash(33),
@@ -923,6 +929,7 @@ mod tests {
             let m2 = Migration::new(
                 "Second",
                 vec![],
+                vec![],
                 m1.resulting_state_hash,
                 test_state_hash(2),
                 vec![],
@@ -931,6 +938,7 @@ mod tests {
 
             let m3 = Migration::new(
                 "Third",
+                vec![],
                 vec![],
                 m2.resulting_state_hash,
                 test_state_hash(3),

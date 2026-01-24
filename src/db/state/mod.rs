@@ -380,7 +380,7 @@ mod tests {
                 })?;
 
             for migration in &migrations[start_idx..=target_idx] {
-                state = state.apply(&migration.operations).map_err(|e| {
+                state = state.apply(&migration.up_operations).map_err(|e| {
                     StateError::ReconstructionFailed {
                         id: migration.id,
                         message: e.to_string(),
@@ -464,6 +464,7 @@ mod tests {
 
             let m2 = Migration::new(
                 "Second",
+                vec![],
                 vec![],
                 m1.resulting_state_hash,
                 StateHash::from_bytes([22u8; 32]),

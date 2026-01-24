@@ -12,6 +12,7 @@ pub mod history;
 pub mod import;
 pub mod init;
 pub mod inspect;
+pub mod migrate;
 pub mod print_migrations;
 pub mod record;
 pub mod schema;
@@ -162,11 +163,23 @@ pub enum CliCommand {
     /// and generates a migration that would transform the schema.
     Generate(generate::Generate),
 
-    /// Run pending migrations against a database
+    /// Migration commands (up/down)
+    ///
+    /// Commands for running and reverting database migrations.
+    #[command(subcommand)]
+    Migrate(migrate::MigrateAction),
+
+    /// Run pending migrations against a database (alias for 'migrate up')
     ///
     /// Connects to a database and applies all migrations that haven't been
     /// applied yet. Each migration runs in its own transaction.
-    Up(up::Up),
+    Up(migrate::Up),
+
+    /// Revert the most recently applied migration (alias for 'migrate down')
+    ///
+    /// Connects to a database and reverts the last applied migration.
+    /// Only one migration is reverted at a time for safety.
+    Down(migrate::Down),
 
     /// List migration history
     ///
@@ -289,7 +302,9 @@ impl CliCommand {
             CliCommand::Check(action) => action.dispatch().await,
             CliCommand::Import(args) => args.dispatch().await,
             CliCommand::Generate(args) => args.dispatch().await,
+            CliCommand::Migrate(action) => action.dispatch().await,
             CliCommand::Up(args) => args.dispatch().await,
+            CliCommand::Down(args) => args.dispatch().await,
             CliCommand::History(args) => args.dispatch().await,
             CliCommand::Show(args) => args.dispatch().await,
             CliCommand::Verify(args) => args.dispatch().await,

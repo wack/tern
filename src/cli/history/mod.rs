@@ -230,6 +230,7 @@ mod tests {
         let m = Migration::new(
             "Second migration",
             vec![],
+            vec![],
             current_hash,
             crate::db::state::StateHash::from_bytes([1u8; 32]),
             vec![],

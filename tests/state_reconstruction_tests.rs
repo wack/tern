@@ -44,6 +44,7 @@ fn build_migration(
     let migration = Migration::new(
         description,
         plan.operations,
+        vec![],
         parent_hash,
         resulting_hash,
         vec![],

@@ -260,6 +260,68 @@ impl<'a> MigrationTracker<'a> {
 
         Ok(row.get(0))
     }
+
+    /// Removes the most recent migration record from the tracking tables.
+    ///
+    /// This should be called within a transaction after successfully
+    /// reverting the migration operations.
+    ///
+    /// # Returns
+    ///
+    /// Returns the ID of the removed migration if successful.
+    pub async fn unrecord_migration(&self) -> Result<String, ExecutionError> {
+        // Get the current (most recent) migration
+        let current_id = self
+            .get_current_migration_id()
+            .await?
+            .ok_or(ExecutionError::NoMigrationsToRevert)?;
+
+        // Get the current migration's sequence to find the previous one
+        let current_migration = self
+            .get_migration(&current_id)
+            .await?
+            .ok_or(ExecutionError::MigrationNotFound(current_id.clone()))?;
+
+        // Find the previous migration (if any)
+        let previous = if current_migration.sequence > 1 {
+            let row = self
+                .client
+                .query_opt(
+                    "SELECT id FROM tern.migrations WHERE sequence = $1",
+                    &[&(current_migration.sequence - 1)],
+                )
+                .await
+                .map_err(|e| ExecutionError::Query(e.to_string()))?;
+            row.map(|r| r.get::<_, String>(0))
+        } else {
+            None
+        };
+
+        // Delete the current migration record
+        self.client
+            .execute("DELETE FROM tern.migrations WHERE id = $1", &[&current_id])
+            .await
+            .map_err(|e| ExecutionError::Query(e.to_string()))?;
+
+        // Update the current pointer
+        if let Some(prev_id) = previous {
+            self.client
+                .execute(
+                    "UPDATE tern.current SET migration_id = $1, updated_at = now()",
+                    &[&prev_id],
+                )
+                .await
+                .map_err(|e| ExecutionError::Query(e.to_string()))?;
+        } else {
+            // No previous migration - delete the current pointer
+            self.client
+                .execute("DELETE FROM tern.current", &[])
+                .await
+                .map_err(|e| ExecutionError::Query(e.to_string()))?;
+        }
+
+        Ok(current_id)
+    }
 }
 
 #[cfg(test)]

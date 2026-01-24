@@ -300,8 +300,12 @@ pub struct Migration {
     /// When the migration was created (not applied).
     pub created_at: Timestamp,
 
-    /// The operations that make up this migration.
-    pub operations: Vec<Operation>,
+    /// The forward operations that make up this migration (applied with `up`).
+    pub up_operations: Vec<Operation>,
+
+    /// The reverse operations to undo this migration (applied with `down`).
+    /// Empty if the migration contains irreversible operations.
+    pub down_operations: Vec<Operation>,
 
     /// Hash of the schema state before this migration.
     pub parent_state_hash: StateHash,
@@ -321,23 +325,25 @@ pub struct Migration {
 impl Migration {
     /// Creates a new migration with the given parameters.
     ///
-    /// The migration ID is computed automatically from the content.
+    /// The migration ID is computed automatically from the up_operations content.
     #[must_use]
     pub fn new(
         description: impl Into<String>,
-        operations: Vec<Operation>,
+        up_operations: Vec<Operation>,
+        down_operations: Vec<Operation>,
         parent_state_hash: StateHash,
         resulting_state_hash: StateHash,
         breaking_changes: Vec<BreakingChange>,
     ) -> Self {
         let description = description.into();
-        let id = MigrationId::from_content(&operations, &parent_state_hash, &description);
+        let id = MigrationId::from_content(&up_operations, &parent_state_hash, &description);
 
         Self {
             id,
             description,
             created_at: Timestamp::now(),
-            operations,
+            up_operations,
+            down_operations,
             parent_state_hash,
             resulting_state_hash,
             breaking_changes,
@@ -359,7 +365,8 @@ impl Migration {
             id,
             description,
             created_at: Timestamp::now(),
-            operations: vec![],
+            up_operations: vec![],
+            down_operations: vec![],
             parent_state_hash: StateHash::zero(),
             resulting_state_hash: resulting_hash,
             breaking_changes: vec![],
@@ -376,18 +383,24 @@ impl Migration {
     /// # Arguments
     ///
     /// * `namespace` - The target schema state
-    /// * `operations` - Operations to create the schema from empty
+    /// * `up_operations` - Operations to create the schema from empty
+    /// * `down_operations` - Operations to revert to empty (typically drop all)
     #[must_use]
-    pub fn baseline_with_operations(namespace: Namespace, operations: Vec<Operation>) -> Self {
+    pub fn baseline_with_operations(
+        namespace: Namespace,
+        up_operations: Vec<Operation>,
+        down_operations: Vec<Operation>,
+    ) -> Self {
         let description = "Baseline migration from existing database".to_string();
-        let id = MigrationId::from_content(&operations, &StateHash::zero(), &description);
+        let id = MigrationId::from_content(&up_operations, &StateHash::zero(), &description);
         let resulting_hash = StateHash::from_namespace(&namespace);
 
         Self {
             id,
             description,
             created_at: Timestamp::now(),
-            operations,
+            up_operations,
+            down_operations,
             parent_state_hash: StateHash::zero(),
             resulting_state_hash: resulting_hash,
             breaking_changes: vec![],
@@ -418,16 +431,24 @@ impl Migration {
         self.checkpoint_state.is_some()
     }
 
-    /// Returns true if this is a baseline migration (no operations).
+    /// Returns true if this is a baseline migration (no up operations).
     #[must_use]
     pub fn is_baseline(&self) -> bool {
-        self.operations.is_empty() && self.parent_state_hash.is_zero()
+        self.up_operations.is_empty() && self.parent_state_hash.is_zero()
     }
 
-    /// Returns the number of operations in this migration.
+    /// Returns the number of up operations in this migration.
     #[must_use]
     pub fn operation_count(&self) -> usize {
-        self.operations.len()
+        self.up_operations.len()
+    }
+
+    /// Returns true if this migration can be reverted.
+    ///
+    /// A migration can be reverted if it has down operations defined.
+    #[must_use]
+    pub fn is_reversible(&self) -> bool {
+        !self.down_operations.is_empty()
     }
 }
 
@@ -734,8 +755,8 @@ mod tests {
         fn new_migration_computes_id() {
             let parent = StateHash::zero();
             let result = StateHash::from_bytes([1u8; 32]);
-            let m1 = Migration::new("test", vec![], parent, result, vec![]);
-            let m2 = Migration::new("test", vec![], parent, result, vec![]);
+            let m1 = Migration::new("test", vec![], vec![], parent, result, vec![]);
+            let m2 = Migration::new("test", vec![], vec![], parent, result, vec![]);
 
             // Same content should produce same ID
             assert_eq!(m1.id, m2.id);
@@ -745,12 +766,32 @@ mod tests {
         fn with_checkpoint_sets_state() {
             let parent = StateHash::zero();
             let result = StateHash::from_bytes([1u8; 32]);
-            let migration = Migration::new("test", vec![], parent, result, vec![]);
+            let migration = Migration::new("test", vec![], vec![], parent, result, vec![]);
             assert!(!migration.is_checkpoint());
 
             let ns = Namespace::empty("public");
             let migration = migration.with_checkpoint(ns);
             assert!(migration.is_checkpoint());
+        }
+
+        #[test]
+        fn is_reversible_with_down_operations() {
+            use crate::db::schema::{SchemaName, TableName};
+
+            let parent = StateHash::zero();
+            let result = StateHash::from_bytes([1u8; 32]);
+
+            // Migration without down operations is not reversible
+            let migration = Migration::new("test", vec![], vec![], parent, result, vec![]);
+            assert!(!migration.is_reversible());
+
+            // Migration with down operations is reversible
+            let down_ops = vec![Operation::DropTable {
+                schema: SchemaName::try_new("public".to_string()).unwrap(),
+                name: TableName::try_new("users".to_string()).unwrap(),
+            }];
+            let migration = Migration::new("test", vec![], down_ops, parent, result, vec![]);
+            assert!(migration.is_reversible());
         }
     }
 
