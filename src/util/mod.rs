@@ -4,9 +4,80 @@
 //! `owo_colors`. The functions are designed to work with `anstream`, which
 //! automatically handles color support detection and respects the `--enable-colors`
 //! CLI flag.
+//!
+//! ## Print Helpers
+//!
+//! Use these macros for all terminal output instead of importing `anstream` directly:
+//!
+//! - [`info!`] - Informational messages (dimmed)
+//! - [`warn!`] - Warning messages to stderr (yellow, bold)
+//! - [`output!`] - Plain output for data/results
+//! - [`newline!`] - Print a blank line
 
 use owo_colors::{OwoColorize, Style};
 use std::fmt::{Display, Formatter, Result as FmtResult};
+
+// =============================================================================
+// Print Helper Macros
+// =============================================================================
+
+/// Prints an informational message to stdout with dimmed styling.
+///
+/// Use for progress messages like "Connecting to database..." or "Loading schema...".
+///
+/// # Examples
+/// ```ignore
+/// info!("Connecting to database...");
+/// info!("Loading schema '{}'...", schema_name);
+/// ```
+#[macro_export]
+macro_rules! info {
+    ($($arg:tt)*) => {{
+        anstream::println!("{}", $crate::util::dim(format!($($arg)*)));
+    }};
+}
+
+/// Prints a warning message to stderr with yellow bold styling.
+///
+/// Use for warnings that don't prevent operation but need attention.
+///
+/// # Examples
+/// ```ignore
+/// warn!("Schema drift detected");
+/// warn!("WARNING: {} breaking change(s) detected", count);
+/// ```
+#[macro_export]
+macro_rules! warn {
+    ($($arg:tt)*) => {{
+        anstream::eprintln!("{}", $crate::util::warning(format!($($arg)*)));
+    }};
+}
+
+/// Prints plain output to stdout without styling.
+///
+/// Use for actual program output like formatted data, SQL statements, etc.
+///
+/// # Examples
+/// ```ignore
+/// output!("{}", formatted_output);
+/// output!("{};", sql_statement);
+/// ```
+#[macro_export]
+macro_rules! output {
+    ($($arg:tt)*) => {{
+        anstream::println!($($arg)*);
+    }};
+}
+
+/// Prints a blank line to stdout.
+///
+/// Use for visual separation in output.
+#[macro_export]
+macro_rules! newline {
+    () => {{
+        anstream::println!();
+    }};
+}
 
 // =============================================================================
 // Styled Wrapper

@@ -5,9 +5,10 @@
 
 use std::path::PathBuf;
 
-use anstream::println;
 use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
+
+use crate::{info, newline, output};
 
 use crate::db::query::PostgresCatalog;
 use crate::db::state::{LocalFileBackend, StateBackend, init_empty, init_from_database};
@@ -52,7 +53,7 @@ impl Init {
         // Initialize based on whether we have a database URL
         let baseline = match self.from {
             Some(database_url) => {
-                println!("Connecting to database...");
+                info!("Connecting to database...");
 
                 // Connect to the database
                 let client = db::connect(&database_url)
@@ -62,7 +63,7 @@ impl Init {
 
                 let catalog = PostgresCatalog::new(&client);
 
-                println!("Capturing schema '{}'...", self.schema);
+                info!("Capturing schema '{}'...", self.schema);
 
                 // Initialize from database
                 let baseline = init_from_database(&backend, &catalog, &self.schema)
@@ -71,7 +72,7 @@ impl Init {
                     .wrap_err("Failed to initialize from database")?;
 
                 let state = baseline.checkpoint_state.as_ref().unwrap();
-                println!(
+                info!(
                     "Captured {} table(s), {} view(s), {} enum(s), {} sequence(s)",
                     state.tables.len(),
                     state.views.len(),
@@ -82,7 +83,7 @@ impl Init {
                 baseline
             }
             None => {
-                println!("Initializing empty state backend...");
+                info!("Initializing empty state backend...");
 
                 // Initialize with empty schema
                 init_empty(&backend, &self.schema)
@@ -92,17 +93,17 @@ impl Init {
             }
         };
 
-        println!();
-        println!("Tern initialized successfully!");
-        println!();
-        println!("  State directory: {}", backend.root().display());
-        println!("  Baseline migration: {}", baseline.id.to_short_hex());
-        println!(
+        newline!();
+        output!("Tern initialized successfully!");
+        newline!();
+        output!("  State directory: {}", backend.root().display());
+        output!("  Baseline migration: {}", baseline.id.to_short_hex());
+        output!(
             "  State hash: {}",
             baseline.resulting_state_hash.to_short_hex()
         );
-        println!();
-        println!(
+        newline!();
+        output!(
             "Run 'tern status' to view the current state or 'tern compile' to create a migration."
         );
 

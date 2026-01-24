@@ -5,7 +5,6 @@
 
 use std::path::PathBuf;
 
-use anstream::println;
 use clap::Args;
 use miette::{Context, IntoDiagnostic};
 use serde::Serialize;
@@ -15,6 +14,7 @@ use crate::db::execution::{ExecutionError, MigrationTracker, compute_migration_h
 use crate::db::migrate::{MigrationPlan, PostgresRenderer, RenderConfig};
 use crate::db::state::{Migration, StateBackend};
 use crate::db::{self};
+use crate::{info, newline, output, warn};
 
 /// Revert the most recently applied migration.
 ///
@@ -143,7 +143,7 @@ impl Down {
         ensure_backend_initialized(&backend).await?;
 
         if !matches!(self.format, OutputFormat::Json) {
-            println!("Connecting to database...");
+            info!("Connecting to database...");
         }
 
         // Connect to the database
@@ -169,9 +169,9 @@ impl Down {
                     error: Some("No migrations have been applied to revert.".to_string()),
                 };
                 match self.format {
-                    OutputFormat::Text => println!("{}", output),
+                    OutputFormat::Text => output!("{}", output),
                     OutputFormat::Json => print_json(&output),
-                    OutputFormat::Sql => println!("-- No migrations to revert"),
+                    OutputFormat::Sql => output!("-- No migrations to revert"),
                 }
                 std::process::exit(1);
             }
@@ -219,43 +219,43 @@ impl Down {
 
         if self.force && !matches!(self.format, OutputFormat::Json) {
             if all_ok {
-                println!();
-                println!("Note: --force was unnecessary, all integrity checks passed.");
-                println!();
+                newline!();
+                info!("Note: --force was unnecessary, all integrity checks passed.");
+                newline!();
             } else {
-                println!();
-                println!("WARNING: Integrity checks failed, but proceeding due to --force flag.");
-                println!();
+                newline!();
+                warn!("Integrity checks failed, but proceeding due to --force flag.");
+                newline!();
                 if let Err(ExecutionError::SchemaDrift {
                     expected, actual, ..
                 }) = &schema_verification
                 {
-                    println!(
+                    warn!(
                         "  Schema drift detected for migration {}...:",
                         &current_id[..12.min(current_id.len())]
                     );
-                    println!("    Expected checksum: {}", expected);
-                    println!("    Actual checksum:   {}", actual);
-                    println!();
+                    warn!("    Expected checksum: {}", expected);
+                    warn!("    Actual checksum:   {}", actual);
+                    newline!();
                 }
                 if !hash_matches {
-                    println!(
+                    warn!(
                         "  Migration file modified for {}...:",
                         &current_id[..12.min(current_id.len())]
                     );
-                    println!(
+                    warn!(
                         "    Expected hash: {}",
                         &current_record.migration_hash
                             [..16.min(current_record.migration_hash.len())]
                     );
-                    println!(
+                    warn!(
                         "    Actual hash:   {}",
                         &local_hash[..16.min(local_hash.len())]
                     );
-                    println!();
+                    newline!();
                 }
-                println!("Proceeding anyway. This can result in schema corruption or data loss.");
-                println!();
+                warn!("Proceeding anyway. This can result in schema corruption or data loss.");
+                newline!();
             }
         } else if !self.force {
             // When not forcing, error on verification failure
@@ -304,9 +304,9 @@ impl Down {
                 ),
             };
             match self.format {
-                OutputFormat::Text => println!("{}", output),
+                OutputFormat::Text => output!("{}", output),
                 OutputFormat::Json => print_json(&output),
-                OutputFormat::Sql => println!("-- Migration is not reversible"),
+                OutputFormat::Sql => output!("-- Migration is not reversible"),
             }
             std::process::exit(1);
         }
@@ -329,10 +329,10 @@ impl Down {
             };
 
             match self.format {
-                OutputFormat::Text => println!("{}", output),
+                OutputFormat::Text => output!("{}", output),
                 OutputFormat::Json => print_json(&output),
                 OutputFormat::Sql => {
-                    println!(
+                    output!(
                         "-- Dry run: would revert migration {}",
                         migration.id.to_short_hex()
                     );
@@ -340,13 +340,13 @@ impl Down {
                     let renderer = PostgresRenderer::new(RenderConfig::default());
                     let plan = MigrationPlan::from_operations(down_ops);
                     let script = plan.render(&renderer);
-                    println!("{}", script.to_sql());
+                    output!("{}", script.to_sql());
                 }
             }
         } else {
             // Execute the revert
             if !matches!(self.format, OutputFormat::Json) {
-                println!("Reverting migration {}...", migration.id.to_short_hex());
+                info!("Reverting migration {}...", migration.id.to_short_hex());
             }
 
             // Render migration to SQL
@@ -387,9 +387,9 @@ impl Down {
                     error: Some(e.to_string()),
                 };
                 match self.format {
-                    OutputFormat::Text => println!("{}", output),
+                    OutputFormat::Text => output!("{}", output),
                     OutputFormat::Json => print_json(&output),
-                    OutputFormat::Sql => println!("-- Revert failed: {}", e),
+                    OutputFormat::Sql => output!("-- Revert failed: {}", e),
                 }
                 std::process::exit(1);
             }
@@ -420,10 +420,10 @@ impl Down {
             };
 
             match self.format {
-                OutputFormat::Text => println!("{}", output),
+                OutputFormat::Text => output!("{}", output),
                 OutputFormat::Json => print_json(&output),
                 OutputFormat::Sql => {
-                    println!("-- Migration reverted successfully");
+                    output!("-- Migration reverted successfully");
                 }
             }
         }

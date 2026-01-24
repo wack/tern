@@ -3,7 +3,6 @@
 //! This command connects to a database and generates the SQL DDL statements
 //! that would recreate all objects in the specified schema from scratch.
 
-use anstream::{eprintln, println};
 use clap::Args;
 use miette::{Context, IntoDiagnostic};
 
@@ -11,6 +10,7 @@ use crate::db::diff::breaking::analyze_breaking_changes;
 use crate::db::migrate::{MigrationPlan, PostgresRenderer, RenderConfig};
 use crate::db::query::{PostgresCatalog, diff_from_empty};
 use crate::db::{self};
+use crate::{newline, output, warn};
 
 /// Arguments for the print-migrations command.
 #[derive(Debug, Clone, Args)]
@@ -29,7 +29,7 @@ impl PrintMigrations {
     ///
     /// Connects to the database and prints migration SQL for the specified schema.
     pub async fn dispatch(&self) -> miette::Result<()> {
-        eprintln!("WARNING: 'print-migrations' is deprecated.");
+        warn!("'print-migrations' is deprecated.");
         // Connect to the database
         let client = db::connect(&self.database_url)
             .await
@@ -48,11 +48,11 @@ impl PrintMigrations {
         // Analyze for breaking changes
         let analysis = analyze_breaking_changes(&diff);
         if !analysis.is_safe() {
-            eprintln!("WARNING: {} breaking change(s) detected:", analysis.len());
+            warn!("{} breaking change(s) detected:", analysis.len());
             for change in analysis.iter() {
-                eprintln!("  [{}] {}", change.mitigation.as_str(), change.description);
+                warn!("  [{}] {}", change.mitigation.as_str(), change.description);
             }
-            eprintln!();
+            newline!();
         }
 
         // Create migration plan
@@ -63,7 +63,7 @@ impl PrintMigrations {
         let script = plan.render(&renderer);
 
         // Print the SQL
-        println!("{}", script.to_sql());
+        output!("{}", script.to_sql());
 
         Ok(())
     }

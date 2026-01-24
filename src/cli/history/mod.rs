@@ -4,13 +4,13 @@
 
 use std::path::PathBuf;
 
-use anstream::println;
 use clap::Args;
 use miette::IntoDiagnostic;
 use serde::Serialize;
 
 use super::{OutputFormat, ensure_backend_initialized, load_backend, print_json};
 use crate::db::state::StateBackend;
+use crate::output;
 
 /// List migration history
 ///
@@ -177,15 +177,15 @@ impl History {
             })
             .collect();
 
-        let output = HistoryOutput {
+        let history_output = HistoryOutput {
             total,
             displayed: migrations.len(),
             migrations,
         };
 
         match self.format {
-            OutputFormat::Text | OutputFormat::Sql => println!("{}", output),
-            OutputFormat::Json => print_json(&output),
+            OutputFormat::Text | OutputFormat::Sql => output!("{}", history_output),
+            OutputFormat::Json => print_json(&history_output),
         }
 
         Ok(())

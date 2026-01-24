@@ -5,7 +5,6 @@
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-use anstream::{eprintln, println};
 use clap::Args;
 use miette::IntoDiagnostic;
 use serde::Serialize;
@@ -18,6 +17,7 @@ use crate::db::migrate::{
 };
 use crate::db::pglite::SchemaLoader;
 use crate::db::state::{Migration, StateBackend, StateHash};
+use crate::{info, newline, output, warn};
 
 /// Generate migration from schema changes.
 ///
@@ -195,9 +195,9 @@ impl Generate {
         if plan.is_empty() {
             match self.format {
                 OutputFormat::Text => {
-                    println!("No changes detected.");
-                    println!();
-                    println!("The schema file matches the current state.");
+                    info!("No changes detected.");
+                    newline!();
+                    info!("The schema file matches the current state.");
                 }
                 OutputFormat::Json => {
                     let output = GenerateOutput {
@@ -215,7 +215,7 @@ impl Generate {
                     print_json(&output);
                 }
                 OutputFormat::Sql => {
-                    println!("-- No changes detected.");
+                    output!("-- No changes detected.");
                 }
             }
             return Ok(());
@@ -225,22 +225,19 @@ impl Generate {
         let destructive_count = analysis.count_by_mitigation(MitigationStrategy::Destructive);
         if destructive_count > 0 && !self.force && !self.dry_run {
             // Show warning
-            eprintln!();
-            eprintln!(
-                "WARNING: {} destructive change(s) detected:",
-                destructive_count
-            );
-            eprintln!();
+            newline!();
+            warn!("{} destructive change(s) detected:", destructive_count);
+            newline!();
             for change in analysis.by_mitigation(MitigationStrategy::Destructive) {
-                eprintln!("  - {}", change.description);
+                warn!("  - {}", change.description);
             }
-            eprintln!();
-            eprintln!("These changes will result in DATA LOSS and cannot be undone.");
-            eprintln!();
+            newline!();
+            warn!("These changes will result in DATA LOSS and cannot be undone.");
+            newline!();
 
             // Prompt for confirmation
             if !confirm_destructive_changes()? {
-                eprintln!("Migration cancelled.");
+                info!("Migration cancelled.");
                 return Ok(());
             }
         }
@@ -268,7 +265,7 @@ impl Generate {
             .map(BreakingChangeOutput::from)
             .collect();
 
-        let output = GenerateOutput {
+        let gen_output = GenerateOutput {
             migration_id: migration.id.to_hex(),
             description: self.description.clone(),
             operation_count: migration.up_operations.len(),
@@ -291,12 +288,12 @@ impl Generate {
 
         // Output based on format
         match self.format {
-            OutputFormat::Text => println!("{}", output),
-            OutputFormat::Json => print_json(&output),
+            OutputFormat::Text => output!("{}", gen_output),
+            OutputFormat::Json => print_json(&gen_output),
             OutputFormat::Sql => {
                 let renderer = PostgresRenderer::new(RenderConfig::default());
                 let script = plan.render(&renderer);
-                println!("{}", script.to_sql());
+                output!("{}", script.to_sql());
             }
         }
 

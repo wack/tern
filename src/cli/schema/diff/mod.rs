@@ -4,7 +4,6 @@
 
 use std::path::PathBuf;
 
-use anstream::println;
 use clap::Args;
 use miette::IntoDiagnostic;
 use serde::Serialize;
@@ -15,6 +14,7 @@ use crate::db::diff::diff_namespaces;
 use crate::db::migrate::{MigrationPlan, PostgresRenderer, RenderConfig};
 use crate::db::pglite::SchemaLoader;
 use crate::db::state::StateBackend;
+use crate::{output, warn};
 
 /// Show diff between current state and edited schema.sql
 ///
@@ -39,9 +39,7 @@ pub struct Diff {
 impl Diff {
     /// Dispatch the schema diff command.
     pub async fn dispatch(self) -> miette::Result<()> {
-        anstream::eprintln!(
-            "WARNING: 'schema diff' is deprecated. Use 'tern check schema' instead."
-        );
+        warn!("'schema diff' is deprecated. Use 'tern check schema' instead.");
 
         let backend = load_backend(self.path.as_deref());
         ensure_backend_initialized(&backend).await?;
@@ -91,7 +89,7 @@ impl Diff {
             .map(String::from)
             .collect();
 
-        let output = SchemaDiffOutput {
+        let diff_output = SchemaDiffOutput {
             schema: schema_name,
             operation_count: plan.len(),
             breaking_change_count: analysis.len(),
@@ -104,13 +102,13 @@ impl Diff {
 
         // Output based on format
         match self.format {
-            OutputFormat::Text => println!("{}", output),
-            OutputFormat::Json => print_json(&output),
+            OutputFormat::Text => output!("{}", diff_output),
+            OutputFormat::Json => print_json(&diff_output),
             OutputFormat::Sql => {
                 if plan.is_empty() {
-                    println!("-- No changes detected.");
+                    output!("-- No changes detected.");
                 } else {
-                    println!("{}", script.to_sql());
+                    output!("{}", script.to_sql());
                 }
             }
         }

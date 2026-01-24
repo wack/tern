@@ -4,7 +4,6 @@
 
 use std::path::PathBuf;
 
-use anstream::println;
 use clap::Args;
 use miette::{Context, IntoDiagnostic};
 use serde::Serialize;
@@ -18,6 +17,7 @@ use crate::db::migrate::{
 use crate::db::query::{PostgresCatalog, load_namespace};
 use crate::db::state::{Migration, StateBackend, StateHash};
 use crate::db::{self};
+use crate::{info, output};
 
 /// Import schema changes from a live database.
 ///
@@ -173,7 +173,7 @@ impl Import {
         let backend = load_backend(self.path.as_deref());
         ensure_backend_initialized(&backend).await?;
 
-        println!("Connecting to database...");
+        info!("Connecting to database...");
 
         // Connect to the database
         let client = db::connect(&db_url)
@@ -197,7 +197,7 @@ impl Import {
 
         // Check if there are any changes
         if diff.is_empty() {
-            let output = ImportOutput {
+            let import_output = ImportOutput {
                 has_changes: false,
                 migration_id: None,
                 description: self.description.clone(),
@@ -218,9 +218,9 @@ impl Import {
             };
 
             match self.format {
-                OutputFormat::Text => println!("{}", output),
-                OutputFormat::Json => print_json(&output),
-                OutputFormat::Sql => println!("-- No changes to import."),
+                OutputFormat::Text => output!("{}", import_output),
+                OutputFormat::Json => print_json(&import_output),
+                OutputFormat::Sql => output!("-- No changes to import."),
             }
 
             return Ok(());
@@ -283,7 +283,7 @@ impl Import {
             None
         };
 
-        let output = ImportOutput {
+        let import_output = ImportOutput {
             has_changes: true,
             migration_id,
             description: self.description,
@@ -294,13 +294,13 @@ impl Import {
 
         // Output based on format
         match self.format {
-            OutputFormat::Text => println!("{}", output),
-            OutputFormat::Json => print_json(&output),
+            OutputFormat::Text => output!("{}", import_output),
+            OutputFormat::Json => print_json(&import_output),
             OutputFormat::Sql => {
                 let renderer = PostgresRenderer::new(RenderConfig::default());
                 let script = plan.render(&renderer);
-                println!("-- Migration SQL to transform expected state to live database state:");
-                println!("{}", script.to_sql());
+                output!("-- Migration SQL to transform expected state to live database state:");
+                output!("{}", script.to_sql());
             }
         }
 

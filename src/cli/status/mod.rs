@@ -5,13 +5,13 @@
 
 use std::path::PathBuf;
 
-use anstream::println;
 use clap::Args;
 use miette::{IntoDiagnostic, miette};
 use serde::Serialize;
 
 use super::{OutputFormat, print_json};
 use crate::db::state::{LocalFileBackend, StateBackend};
+use crate::output;
 
 /// Show state backend status
 ///
@@ -168,7 +168,7 @@ impl Status {
             Err(_) => None,
         };
 
-        let output = StatusOutput {
+        let status_output = StatusOutput {
             initialized,
             state_directory: backend.root().display().to_string(),
             migration_count: index.len(),
@@ -182,8 +182,8 @@ impl Status {
         };
 
         match self.format {
-            OutputFormat::Text | OutputFormat::Sql => println!("{}", output),
-            OutputFormat::Json => print_json(&output),
+            OutputFormat::Text | OutputFormat::Sql => output!("{}", status_output),
+            OutputFormat::Json => print_json(&status_output),
         }
 
         Ok(())

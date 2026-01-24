@@ -4,7 +4,6 @@
 
 use std::path::PathBuf;
 
-use anstream::println;
 use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use serde::Serialize;
@@ -12,6 +11,7 @@ use serde::Serialize;
 use super::{OutputFormat, ensure_backend_initialized, load_backend, print_json};
 use crate::db::migrate::{MigrationPlan, PostgresRenderer, RenderConfig};
 use crate::db::state::{LocalFileBackend, MigrationId, StateBackend};
+use crate::{newline, output};
 
 /// Show details of a specific migration
 ///
@@ -147,7 +147,7 @@ impl Show {
         };
 
         // Build output
-        let output = ShowOutput {
+        let show_output = ShowOutput {
             id: migration.id.to_hex(),
             short_id: migration.id.to_short_hex(),
             description: migration.description.clone(),
@@ -170,18 +170,22 @@ impl Show {
         };
 
         match self.format {
-            OutputFormat::Text => println!("{}", output),
-            OutputFormat::Json => print_json(&output),
+            OutputFormat::Text => output!("{}", show_output),
+            OutputFormat::Json => print_json(&show_output),
             OutputFormat::Sql => {
-                if let Some(ref statements) = output.sql_statements {
+                if let Some(ref statements) = show_output.sql_statements {
                     if statements.is_empty() {
-                        println!("-- No SQL statements (baseline migration)");
+                        output!("-- No SQL statements (baseline migration)");
                     } else {
-                        println!("-- Migration: {} ({})", output.short_id, output.description);
-                        println!();
+                        output!(
+                            "-- Migration: {} ({})",
+                            show_output.short_id,
+                            show_output.description
+                        );
+                        newline!();
                         for stmt in statements {
-                            println!("{};", stmt);
-                            println!();
+                            output!("{};", stmt);
+                            newline!();
                         }
                     }
                 }

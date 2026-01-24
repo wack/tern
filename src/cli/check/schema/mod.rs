@@ -5,7 +5,6 @@
 
 use std::path::PathBuf;
 
-use anstream::println;
 use clap::Args;
 use miette::IntoDiagnostic;
 use serde::Serialize;
@@ -16,6 +15,7 @@ use crate::db::diff::diff_namespaces;
 use crate::db::migrate::{MigrationPlan, PostgresRenderer, RenderConfig};
 use crate::db::pglite::SchemaLoader;
 use crate::db::state::StateBackend;
+use crate::output;
 
 /// Verify that schema.sql is consistent with migrations.
 ///
@@ -83,7 +83,7 @@ impl CheckSchema {
             None
         };
 
-        let output = CheckSchemaOutput {
+        let check_output = CheckSchemaOutput {
             consistent,
             migration_checksum,
             schema_file_checksum,
@@ -92,8 +92,8 @@ impl CheckSchema {
 
         // Output based on format
         match self.format {
-            OutputFormat::Text => println!("{}", output),
-            OutputFormat::Json => print_json(&output),
+            OutputFormat::Text => output!("{}", check_output),
+            OutputFormat::Json => print_json(&check_output),
             OutputFormat::Sql => {
                 if !consistent {
                     // Show the SQL that would bring schema.sql in line with migrations
@@ -101,10 +101,10 @@ impl CheckSchema {
                     let plan = MigrationPlan::from_diff(&diff);
                     let renderer = PostgresRenderer::new(RenderConfig::default());
                     let script = plan.render(&renderer);
-                    println!("-- SQL to transform migrations state to schema.sql state:");
-                    println!("{}", script.to_sql());
+                    output!("-- SQL to transform migrations state to schema.sql state:");
+                    output!("{}", script.to_sql());
                 } else {
-                    println!("-- No changes needed. Schema is consistent.");
+                    output!("-- No changes needed. Schema is consistent.");
                 }
             }
         }

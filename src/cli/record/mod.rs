@@ -15,13 +15,13 @@
 
 use std::path::PathBuf;
 
-use anstream::println;
 use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use serde::Serialize;
 
 use super::{OutputFormat, ensure_backend_initialized, load_backend, print_json};
 use crate::db::state::{Migration, MigrationId, StateBackend, StateHash};
+use crate::{output, warn};
 
 /// Record a migration as applied
 ///
@@ -49,7 +49,7 @@ pub struct Record {
 impl Record {
     /// Dispatch the record command.
     pub async fn dispatch(self) -> miette::Result<()> {
-        anstream::eprintln!("WARNING: 'record' is deprecated.");
+        warn!("'record' is deprecated.");
 
         // Must provide one of migration_id or migration_file
         if self.migration_id.is_none() && self.migration_file.is_none() {
@@ -134,7 +134,7 @@ impl Record {
             .into_diagnostic()
             .wrap_err("Failed to record migration")?;
 
-        let output = RecordOutput {
+        let record_output = RecordOutput {
             success: true,
             migration_id: migration.id.to_hex(),
             description: migration.description.clone(),
@@ -143,8 +143,8 @@ impl Record {
         };
 
         match self.format {
-            OutputFormat::Text | OutputFormat::Sql => println!("{}", output),
-            OutputFormat::Json => print_json(&output),
+            OutputFormat::Text | OutputFormat::Sql => output!("{}", record_output),
+            OutputFormat::Json => print_json(&record_output),
         }
 
         Ok(())

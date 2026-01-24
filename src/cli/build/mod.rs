@@ -5,7 +5,6 @@
 
 use std::path::PathBuf;
 
-use anstream::println;
 use clap::Args;
 use jiff::Zoned;
 use miette::{Context, IntoDiagnostic, miette};
@@ -19,6 +18,7 @@ use crate::db::compile::{
 use crate::db::query::PostgresCatalog;
 use crate::db::state::{StateBackend, StateHash};
 use crate::db::{self};
+use crate::{info, newline, output, warn};
 
 /// Build a migration executable or OCI image
 ///
@@ -74,7 +74,7 @@ pub struct Build {
 impl Build {
     /// Dispatch the build command.
     pub async fn dispatch(self) -> miette::Result<()> {
-        anstream::eprintln!("WARNING: 'build' is deprecated.");
+        warn!("'build' is deprecated.");
 
         // Parse target
         let target = Target::from_str_name(&self.target).ok_or_else(|| {
@@ -105,7 +105,7 @@ impl Build {
             .wrap_err("Failed to load current state from backend")?;
 
         // Connect to database and load target state
-        println!("Connecting to database...");
+        info!("Connecting to database...");
 
         let client = db::connect(&self.database_url)
             .await
@@ -114,7 +114,7 @@ impl Build {
 
         let catalog = PostgresCatalog::new(&client);
 
-        println!("Loading schema '{}'...", self.schema);
+        info!("Loading schema '{}'...", self.schema);
 
         let target_state = crate::db::query::load_namespace(&catalog, &self.schema)
             .await
@@ -141,11 +141,11 @@ impl Build {
         }
 
         if source_hash != target_hash && self.allow_drift {
-            println!("WARNING: Schema drift detected. Proceeding with --allow-drift.");
+            warn!("Schema drift detected. Proceeding with --allow-drift.");
         }
 
         // Compile the migration
-        println!("Compiling migration...");
+        info!("Compiling migration...");
 
         let options = CompileOptions::new(&self.description).with_target(target);
         let result = compile_migration(&source_state, &target_state, options).into_diagnostic()?;
@@ -195,7 +195,7 @@ impl Build {
         };
 
         // Build the executable or OCI image
-        println!(
+        info!(
             "Building {} for {}...",
             match package_format {
                 PackageFormat::Binary => "executable",
@@ -218,7 +218,7 @@ impl Build {
                 .into_diagnostic()
                 .wrap_err("Failed to record migration")?;
 
-            println!("Migration recorded to state backend.");
+            info!("Migration recorded to state backend.");
         }
 
         // Build output
@@ -239,12 +239,12 @@ impl Build {
 
         // Output results
         match self.format {
-            OutputFormat::Text => println!("{}", build_output),
+            OutputFormat::Text => output!("{}", build_output),
             OutputFormat::Json => print_json(&build_output),
             OutputFormat::Sql => {
                 for stmt in &result.compilation.statements {
-                    println!("{};", stmt.sql);
-                    println!();
+                    output!("{};", stmt.sql);
+                    newline!();
                 }
             }
         }

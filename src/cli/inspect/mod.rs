@@ -5,13 +5,13 @@
 
 use std::path::PathBuf;
 
-use anstream::println;
 use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use serde::Serialize;
 
 use super::{OutputFormat, print_json};
 use crate::db::state::Migration;
+use crate::{newline, output, warn};
 
 /// Inspect a compiled migration file
 ///
@@ -30,7 +30,7 @@ pub struct Inspect {
 impl Inspect {
     /// Dispatch the inspect command.
     pub async fn dispatch(self) -> miette::Result<()> {
-        anstream::eprintln!("WARNING: 'inspect' is deprecated.");
+        warn!("'inspect' is deprecated.");
 
         if !self.path.exists() {
             return Err(miette!("File not found: {}", self.path.display()));
@@ -39,7 +39,7 @@ impl Inspect {
         // Determine file type and inspect accordingly
         let extension = self.path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
-        let output = match extension.to_lowercase().as_str() {
+        let inspect_output = match extension.to_lowercase().as_str() {
             "json" => inspect_json_migration(&self.path)?,
             "rs" => inspect_rust_source(&self.path)?,
             _ => {
@@ -51,22 +51,22 @@ impl Inspect {
         };
 
         match self.format {
-            OutputFormat::Text => println!("{}", output),
-            OutputFormat::Json => print_json(&output),
+            OutputFormat::Text => output!("{}", inspect_output),
+            OutputFormat::Json => print_json(&inspect_output),
             OutputFormat::Sql => {
-                if let Some(ref statements) = output.sql_statements {
-                    println!(
+                if let Some(ref statements) = inspect_output.sql_statements {
+                    output!(
                         "-- Migration: {} ({})",
-                        output.migration_id.as_deref().unwrap_or("unknown"),
-                        output.description.as_deref().unwrap_or("unknown")
+                        inspect_output.migration_id.as_deref().unwrap_or("unknown"),
+                        inspect_output.description.as_deref().unwrap_or("unknown")
                     );
-                    println!();
+                    newline!();
                     for stmt in statements {
-                        println!("{};", stmt);
-                        println!();
+                        output!("{};", stmt);
+                        newline!();
                     }
                 } else {
-                    println!("-- No SQL statements available");
+                    output!("-- No SQL statements available");
                 }
             }
         }

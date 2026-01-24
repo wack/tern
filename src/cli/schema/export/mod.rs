@@ -4,12 +4,12 @@
 
 use std::path::PathBuf;
 
-use anstream::println;
 use clap::Args;
 use miette::IntoDiagnostic;
 
 use crate::cli::{OutputFormat, ensure_backend_initialized, load_backend};
 use crate::db::state::{SchemaExporter, StateBackend};
+use crate::{info, newline, output};
 
 /// Export the current schema as SQL DDL
 ///
@@ -52,18 +52,18 @@ impl Export {
             // Write to stdout
             match self.format {
                 OutputFormat::Sql | OutputFormat::Text => {
-                    println!("{sql}");
+                    output!("{sql}");
                 }
                 OutputFormat::Json => {
                     // For JSON format, wrap in a structured output
-                    let output = SchemaExportOutput {
+                    let export_output = SchemaExportOutput {
                         schema: namespace.name.as_ref().to_string(),
                         sql: sql.clone(),
                         path: None,
                     };
-                    println!(
+                    output!(
                         "{}",
-                        serde_json::to_string_pretty(&output).into_diagnostic()?
+                        serde_json::to_string_pretty(&export_output).into_diagnostic()?
                     );
                 }
             }
@@ -75,23 +75,23 @@ impl Export {
 
             match self.format {
                 OutputFormat::Text | OutputFormat::Sql => {
-                    println!("Schema exported to: {}", output_path.display());
-                    println!();
-                    println!("Schema: {}", namespace.name.as_ref());
-                    println!("Tables: {}", namespace.tables.len());
-                    println!("Views: {}", namespace.views.len());
-                    println!("Sequences: {}", namespace.sequences.len());
-                    println!("Enums: {}", namespace.enums.len());
+                    info!("Schema exported to: {}", output_path.display());
+                    newline!();
+                    info!("Schema: {}", namespace.name.as_ref());
+                    info!("Tables: {}", namespace.tables.len());
+                    info!("Views: {}", namespace.views.len());
+                    info!("Sequences: {}", namespace.sequences.len());
+                    info!("Enums: {}", namespace.enums.len());
                 }
                 OutputFormat::Json => {
-                    let output = SchemaExportOutput {
+                    let export_output = SchemaExportOutput {
                         schema: namespace.name.as_ref().to_string(),
                         sql,
                         path: Some(output_path.to_string_lossy().to_string()),
                     };
-                    println!(
+                    output!(
                         "{}",
-                        serde_json::to_string_pretty(&output).into_diagnostic()?
+                        serde_json::to_string_pretty(&export_output).into_diagnostic()?
                     );
                 }
             }

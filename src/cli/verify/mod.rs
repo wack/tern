@@ -5,7 +5,6 @@
 
 use std::path::PathBuf;
 
-use anstream::println;
 use clap::Args;
 use miette::{Context, IntoDiagnostic};
 use serde::Serialize;
@@ -18,6 +17,7 @@ use crate::db::query::PostgresCatalog;
 use crate::db::schema::{ColumnName, ConstraintName, IndexName, SequenceName, TableName, TypeName};
 use crate::db::state::{StateBackend, StateHash};
 use crate::db::{self};
+use crate::{info, output, warn};
 
 /// Verify state backend matches database
 ///
@@ -74,7 +74,7 @@ impl Verify {
     pub async fn dispatch(self) -> miette::Result<()> {
         // Connect to database
         if !matches!(self.format, OutputFormat::Json) {
-            println!("Connecting to database...");
+            info!("Connecting to database...");
         }
         let client = db::connect(&self.database_url)
             .await
@@ -84,7 +84,7 @@ impl Verify {
         let catalog = PostgresCatalog::new(&client);
 
         if !matches!(self.format, OutputFormat::Json) {
-            println!("Verifying schema '{}'...", self.schema);
+            info!("Verifying schema '{}'...", self.schema);
         }
 
         // Get the current migration's expected schema_hash from DB
@@ -111,7 +111,7 @@ impl Verify {
             (None, Some(_)) => {
                 // Migration exists but no schema_hash recorded (shouldn't happen normally)
                 if !matches!(self.format, OutputFormat::Json) {
-                    println!("Warning: Current migration has no recorded schema_hash");
+                    warn!("Current migration has no recorded schema_hash");
                 }
                 true
             }
@@ -170,7 +170,7 @@ impl Verify {
         };
 
         match self.format {
-            OutputFormat::Text | OutputFormat::Sql => println!("{}", output),
+            OutputFormat::Text | OutputFormat::Sql => output!("{}", output),
             OutputFormat::Json => print_json(&output),
         }
 
@@ -190,12 +190,12 @@ impl VerifyChain {
         let backend = load_backend(self.path.as_deref());
         ensure_backend_initialized(&backend).await?;
 
-        println!("Verifying migration chain...");
+        info!("Verifying migration chain...");
 
         match backend.verify_chain().await {
             Ok(()) => {
                 let index = backend.get_migration_index().await.into_diagnostic()?;
-                let output = ChainVerifyOutput {
+                let result = ChainVerifyOutput {
                     verified: true,
                     migration_count: index.len(),
                     message: format!(
@@ -205,21 +205,21 @@ impl VerifyChain {
                 };
 
                 match self.format {
-                    OutputFormat::Text | OutputFormat::Sql => println!("{}", output),
-                    OutputFormat::Json => print_json(&output),
+                    OutputFormat::Text | OutputFormat::Sql => output!("{}", result),
+                    OutputFormat::Json => print_json(&result),
                 }
                 Ok(())
             }
             Err(e) => {
-                let output = ChainVerifyOutput {
+                let result = ChainVerifyOutput {
                     verified: false,
                     migration_count: 0,
                     message: format!("Chain verification failed: {}", e),
                 };
 
                 match self.format {
-                    OutputFormat::Text | OutputFormat::Sql => println!("{}", output),
-                    OutputFormat::Json => print_json(&output),
+                    OutputFormat::Text | OutputFormat::Sql => output!("{}", result),
+                    OutputFormat::Json => print_json(&result),
                 }
 
                 std::process::exit(1);

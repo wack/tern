@@ -24,13 +24,13 @@ pub mod version;
 
 pub use colors::EnableColors;
 
-use anstream::println;
 use clap::{Parser, Subcommand};
 use miette::IntoDiagnostic;
 use serde::Serialize;
 use tracing::level_filters::LevelFilter;
 
 use crate::db::state::{LocalFileBackend, StateBackend};
+use crate::output;
 
 // =============================================================================
 // Shared Helpers (used by command modules)
@@ -78,24 +78,24 @@ impl std::fmt::Display for OutputFormat {
 
 /// Prints output in the specified format.
 #[allow(dead_code)]
-pub fn print_output<T: Serialize + std::fmt::Display>(output: &T, format: OutputFormat) {
+pub fn print_output<T: Serialize + std::fmt::Display>(value: &T, format: OutputFormat) {
     match format {
-        OutputFormat::Text => println!("{}", output),
+        OutputFormat::Text => output!("{}", value),
         OutputFormat::Json => {
-            println!(
+            output!(
                 "{}",
-                serde_json::to_string_pretty(output).expect("failed to serialize output")
+                serde_json::to_string_pretty(value).expect("failed to serialize output")
             );
         }
-        OutputFormat::Sql => println!("{}", output),
+        OutputFormat::Sql => output!("{}", value),
     }
 }
 
 /// Prints a JSON-serializable value.
-pub fn print_json<T: Serialize>(output: &T) {
-    println!(
+pub fn print_json<T: Serialize>(value: &T) {
+    output!(
         "{}",
-        serde_json::to_string_pretty(output).expect("failed to serialize output")
+        serde_json::to_string_pretty(value).expect("failed to serialize output")
     );
 }
 

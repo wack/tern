@@ -5,7 +5,6 @@
 
 use std::path::PathBuf;
 
-use anstream::println;
 use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use serde::Serialize;
@@ -15,6 +14,7 @@ use crate::db::compile::{CompileOptions, Target, compile_migration};
 use crate::db::query::PostgresCatalog;
 use crate::db::state::{StateBackend, StateHash};
 use crate::db::{self};
+use crate::{info, newline, output, warn};
 
 /// Compile a migration to source code
 ///
@@ -74,9 +74,7 @@ pub struct Compile {
 impl Compile {
     /// Dispatch the compile command.
     pub async fn dispatch(self) -> miette::Result<()> {
-        anstream::eprintln!(
-            "WARNING: 'compile' is deprecated. Use 'tern import' + 'tern build' instead."
-        );
+        warn!("'compile' is deprecated. Use 'tern import' + 'tern build' instead.");
 
         // Parse target
         let target = Target::from_str_name(&self.target).ok_or_else(|| {
@@ -99,7 +97,7 @@ impl Compile {
 
         // Connect to database and load target state
         if !self.dry_run {
-            println!("Connecting to database...");
+            info!("Connecting to database...");
         }
 
         let client = db::connect(&self.database_url)
@@ -110,7 +108,7 @@ impl Compile {
         let catalog = PostgresCatalog::new(&client);
 
         if !self.dry_run {
-            println!("Loading schema '{}'...", self.schema);
+            info!("Loading schema '{}'...", self.schema);
         }
 
         let target_state = crate::db::query::load_namespace(&catalog, &self.schema)
@@ -138,12 +136,12 @@ impl Compile {
         }
 
         if source_hash != target_hash && self.allow_drift && !self.dry_run {
-            println!("WARNING: Schema drift detected. Proceeding with --allow-drift.");
+            warn!("Schema drift detected. Proceeding with --allow-drift.");
         }
 
         // Compile the migration
         if !self.dry_run {
-            println!("Compiling migration...");
+            info!("Compiling migration...");
         }
 
         let options = CompileOptions::new(&self.description).with_target(target);
@@ -214,17 +212,17 @@ impl Compile {
                 .into_diagnostic()
                 .wrap_err("Failed to record migration")?;
 
-            println!("Migration recorded to state backend.");
+            info!("Migration recorded to state backend.");
         }
 
         // Output results
         match self.format {
-            OutputFormat::Text => println!("{}", compile_output),
+            OutputFormat::Text => output!("{}", compile_output),
             OutputFormat::Json => print_json(&compile_output),
             OutputFormat::Sql => {
                 for stmt in &result.compilation.statements {
-                    println!("{};", stmt.sql);
-                    println!();
+                    output!("{};", stmt.sql);
+                    newline!();
                 }
             }
         }

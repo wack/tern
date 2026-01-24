@@ -4,7 +4,6 @@
 
 use std::path::PathBuf;
 
-use anstream::println;
 use clap::Args;
 use miette::{Context, IntoDiagnostic};
 use serde::Serialize;
@@ -13,6 +12,7 @@ use crate::cli::{OutputFormat, ensure_backend_initialized, load_backend, print_j
 use crate::db::execution::MigrationExecutor;
 use crate::db::state::StateBackend;
 use crate::db::{self};
+use crate::{info, output};
 
 /// Run pending migrations against a live database.
 ///
@@ -161,7 +161,7 @@ impl Up {
         }
 
         if !matches!(self.format, OutputFormat::Json) {
-            println!("Connecting to database...");
+            info!("Connecting to database...");
         }
 
         // Connect to the database
@@ -176,7 +176,7 @@ impl Up {
         if self.dry_run {
             // Just show pending migrations
             if !matches!(self.format, OutputFormat::Json) {
-                println!("Checking migration status...");
+                info!("Checking migration status...");
             }
 
             let pending = executor
@@ -196,7 +196,7 @@ impl Up {
                 })
                 .collect();
 
-            let output = UpOutput {
+            let up_result = UpOutput {
                 success: true,
                 dry_run: true,
                 migration_count: migrations.len(),
@@ -205,19 +205,19 @@ impl Up {
             };
 
             match self.format {
-                OutputFormat::Text => println!("{}", output),
-                OutputFormat::Json => print_json(&output),
+                OutputFormat::Text => output!("{}", up_result),
+                OutputFormat::Json => print_json(&up_result),
                 OutputFormat::Sql => {
-                    println!("-- Dry run: showing pending migrations");
+                    output!("-- Dry run: showing pending migrations");
                     for m in pending {
-                        println!("-- Migration: {} - {}", m.id.to_short_hex(), m.description);
+                        output!("-- Migration: {} - {}", m.id.to_short_hex(), m.description);
                     }
                 }
             }
         } else {
             // Execute pending migrations
             if !matches!(self.format, OutputFormat::Json) {
-                println!("Checking migration status...");
+                info!("Checking migration status...");
             }
 
             let result = executor
@@ -238,7 +238,7 @@ impl Up {
                 })
                 .collect();
 
-            let output = UpOutput {
+            let up_result = UpOutput {
                 success: result.success,
                 dry_run: false,
                 migration_count: migrations.len(),
@@ -247,13 +247,13 @@ impl Up {
             };
 
             match self.format {
-                OutputFormat::Text => println!("{}", output),
-                OutputFormat::Json => print_json(&output),
+                OutputFormat::Text => output!("{}", up_result),
+                OutputFormat::Json => print_json(&up_result),
                 OutputFormat::Sql => {
                     if result.success {
-                        println!("-- All migrations applied successfully");
+                        output!("-- All migrations applied successfully");
                     } else if let Some(err) = &result.error {
-                        println!("-- Migration failed: {}", err);
+                        output!("-- Migration failed: {}", err);
                     }
                 }
             }
