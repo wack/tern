@@ -12,6 +12,14 @@ fi
 
 echo "Installing development tools for Tern..."
 
+# Add wasm32-wasip2 target for WebAssembly builds
+if ! rustup target list --installed | grep -q wasm32-wasip2; then
+  echo "Adding wasm32-wasip2 target..."
+  rustup target add wasm32-wasip2
+else
+  echo "wasm32-wasip2 target already installed"
+fi
+
 # Install cargo-binstall if not already installed (for fast binary downloads)
 if ! command -v cargo-binstall &> /dev/null; then
   echo "Installing cargo-binstall..."
