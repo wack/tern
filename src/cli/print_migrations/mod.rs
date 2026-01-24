@@ -3,6 +3,7 @@
 //! This command connects to a database and generates the SQL DDL statements
 //! that would recreate all objects in the specified schema from scratch.
 
+use anstream::{eprintln, println};
 use clap::Args;
 use miette::{Context, IntoDiagnostic};
 
