@@ -40,6 +40,14 @@ pub struct Up {
     #[arg(long)]
     pub dry_run: bool,
 
+    /// Skip integrity verification (dangerous)
+    ///
+    /// This skips both schema checksum verification and migration hash
+    /// verification. Use only in emergency situations when you understand
+    /// the risks of schema corruption.
+    #[arg(long)]
+    pub force: bool,
+
     /// Output format
     #[arg(long, default_value = "text")]
     pub format: OutputFormat,
@@ -173,6 +181,51 @@ impl Up {
         // Create executor
         let executor = MigrationExecutor::new(&client, &backend, &self.schema);
 
+        // When --force is used, still perform verification but warn instead of error
+        if self.force && !matches!(self.format, OutputFormat::Json) {
+            let status = executor
+                .check_integrity()
+                .await
+                .into_diagnostic()
+                .wrap_err("Failed to check integrity")?;
+
+            if status.all_ok() {
+                println!();
+                println!("Note: --force was unnecessary, all integrity checks passed.");
+                println!();
+            } else {
+                println!();
+                println!("WARNING: Integrity checks failed, but proceeding due to --force flag.");
+                println!();
+                if let Some(ref mismatch) = status.schema_mismatch {
+                    println!(
+                        "  Schema drift detected for migration {}...:",
+                        &mismatch.migration_id[..12.min(mismatch.migration_id.len())]
+                    );
+                    println!("    Expected checksum: {}", mismatch.expected);
+                    println!("    Actual checksum:   {}", mismatch.actual);
+                    println!();
+                }
+                if let Some(ref divergence) = status.history_diverged {
+                    println!(
+                        "  Migration history diverged for {}...:",
+                        &divergence.migration_id[..12.min(divergence.migration_id.len())]
+                    );
+                    println!(
+                        "    Expected hash: {}",
+                        &divergence.expected_hash[..16.min(divergence.expected_hash.len())]
+                    );
+                    println!(
+                        "    Actual hash:   {}",
+                        &divergence.actual_hash[..16.min(divergence.actual_hash.len())]
+                    );
+                    println!();
+                }
+                println!("Proceeding anyway. This can result in schema corruption or data loss.");
+                println!();
+            }
+        }
+
         if self.dry_run {
             // Just show pending migrations
             if !matches!(self.format, OutputFormat::Json) {
@@ -180,7 +233,7 @@ impl Up {
             }
 
             let pending = executor
-                .get_pending()
+                .get_pending(self.force)
                 .await
                 .into_diagnostic()
                 .wrap_err("Failed to get pending migrations")?;
@@ -221,7 +274,7 @@ impl Up {
             }
 
             let result = executor
-                .execute_pending()
+                .execute_pending(self.force)
                 .await
                 .into_diagnostic()
                 .wrap_err("Failed to execute migrations")?;

@@ -180,7 +180,7 @@ impl Up {
             }
 
             let pending = executor
-                .get_pending()
+                .get_pending(false)
                 .await
                 .into_diagnostic()
                 .wrap_err("Failed to get pending migrations")?;
@@ -221,7 +221,7 @@ impl Up {
             }
 
             let result = executor
-                .execute_pending()
+                .execute_pending(false)
                 .await
                 .into_diagnostic()
                 .wrap_err("Failed to execute migrations")?;

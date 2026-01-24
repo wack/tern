@@ -98,6 +98,36 @@ pub enum ExecutionError {
         help("The baseline migration represents the initial state and cannot be reverted.")
     )]
     CannotRevertBaseline(String),
+
+    /// Schema drift detected - database has been modified outside of Tern.
+    #[error(
+        "schema drift detected: database schema does not match expected state after migration {migration_id}"
+    )]
+    #[diagnostic(
+        code(tern::execution::schema_drift),
+        help(
+            "The database was modified outside of Tern migrations.\n\nExpected checksum: {expected}\nActual checksum:   {actual}\n\nTo investigate: tern verify --database-url <URL>\nTo resolve:\n  Option 1: Revert manual changes to match expected state\n  Option 2: Run `tern compile` to capture changes as a new migration\n  Option 3: Use `--force` to skip verification (dangerous)"
+        )
+    )]
+    SchemaDrift {
+        migration_id: String,
+        expected: String,
+        actual: String,
+    },
+
+    /// Migration file has been modified since it was applied.
+    #[error("migration file has been modified since it was applied: {migration_id}")]
+    #[diagnostic(
+        code(tern::execution::migration_modified),
+        help(
+            "This migration was applied with different operations than what's on disk.\n\nExpected hash: {expected_hash}\nActual hash:   {actual_hash}\n\nTo resolve:\n  Option 1: Restore the original migration file from version control\n  Option 2: Use `--force` to skip verification (dangerous)\n\nWarning: Running migrations with mismatched history can cause schema inconsistencies between environments."
+        )
+    )]
+    MigrationModified {
+        migration_id: String,
+        expected_hash: String,
+        actual_hash: String,
+    },
 }
 
 /// Represents the result of applying a single migration.
