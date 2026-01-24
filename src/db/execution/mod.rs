@@ -72,5 +72,8 @@ mod executor;
 mod tracker;
 
 pub use error::{ExecutionError, ExecutionResult, MigrationResult};
-pub use executor::{MigrationExecutor, compute_migration_hash};
+pub use executor::{
+    HistoryDivergence, MigrationExecutor, SchemaMismatch, VerificationStatus,
+    compute_migration_hash,
+};
 pub use tracker::{MigrationRecord, MigrationTracker};

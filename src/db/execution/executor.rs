@@ -14,6 +14,48 @@ use crate::db::state::{Migration, MigrationId};
 use super::error::{ExecutionError, ExecutionResult, MigrationResult};
 use super::tracker::MigrationTracker;
 
+/// Result of integrity verification checks.
+#[derive(Debug, Clone, Default)]
+pub struct VerificationStatus {
+    /// Whether schema checksum verification passed (or was not applicable).
+    pub schema_ok: bool,
+    /// Details about schema verification failure, if any.
+    pub schema_mismatch: Option<SchemaMismatch>,
+    /// Whether migration history verification passed.
+    pub history_ok: bool,
+    /// Details about history verification failure, if any.
+    pub history_diverged: Option<HistoryDivergence>,
+}
+
+/// Details about a schema checksum mismatch.
+#[derive(Debug, Clone)]
+pub struct SchemaMismatch {
+    /// The migration ID that was verified against.
+    pub migration_id: String,
+    /// The expected checksum from the database.
+    pub expected: String,
+    /// The actual checksum computed from the live schema.
+    pub actual: String,
+}
+
+/// Details about migration history divergence.
+#[derive(Debug, Clone)]
+pub struct HistoryDivergence {
+    /// The first migration that diverged.
+    pub migration_id: String,
+    /// The expected hash from the database.
+    pub expected_hash: String,
+    /// The actual hash computed from the local file.
+    pub actual_hash: String,
+}
+
+impl VerificationStatus {
+    /// Returns true if all checks passed.
+    pub fn all_ok(&self) -> bool {
+        self.schema_ok && self.history_ok
+    }
+}
+
 /// Executes migrations against a live PostgreSQL database.
 ///
 /// The executor:
@@ -47,6 +89,72 @@ impl<'a> MigrationExecutor<'a> {
     /// Returns the target schema name.
     pub fn target_schema(&self) -> &str {
         self.tracker.target_schema()
+    }
+
+    /// Checks integrity of the migration state without executing anything.
+    ///
+    /// This method verifies:
+    /// 1. Schema checksum - the live database matches the expected state
+    /// 2. History integrity - migration files match what was applied
+    ///
+    /// Returns a `VerificationStatus` indicating what passed or failed.
+    pub async fn check_integrity(&self) -> Result<VerificationStatus, ExecutionError> {
+        // Ensure tracking infrastructure exists
+        self.tracker.ensure_schema().await?;
+
+        let mut status = VerificationStatus {
+            schema_ok: true,
+            schema_mismatch: None,
+            history_ok: true,
+            history_diverged: None,
+        };
+
+        // Get current state
+        let current_id = self.tracker.get_current_migration_id().await?;
+
+        // Check schema integrity
+        if let Some(ref id) = current_id
+            && let Some(expected_hash) = self.tracker.get_schema_hash(id).await?
+            && let Err(ExecutionError::SchemaDrift {
+                expected, actual, ..
+            }) = self
+                .tracker
+                .verify_schema_checksum(id, &expected_hash)
+                .await
+        {
+            status.schema_ok = false;
+            status.schema_mismatch = Some(SchemaMismatch {
+                migration_id: id.clone(),
+                expected,
+                actual,
+            });
+        }
+
+        // Load all local migrations for history check
+        let all_migrations = self
+            .backend
+            .get_all_migrations()
+            .await
+            .map_err(|e| ExecutionError::InvalidState(e.to_string()))?;
+
+        // Check history integrity
+        let local_hashes: Vec<(MigrationId, String)> = all_migrations
+            .iter()
+            .map(|m| (m.id, compute_migration_hash(m)))
+            .collect();
+
+        let diverged = self.tracker.verify_history(&local_hashes).await?;
+
+        if let Some((id, expected, actual)) = diverged.first() {
+            status.history_ok = false;
+            status.history_diverged = Some(HistoryDivergence {
+                migration_id: id.clone(),
+                expected_hash: expected.clone(),
+                actual_hash: actual.clone(),
+            });
+        }
+
+        Ok(status)
     }
 
     /// Executes all pending migrations.

@@ -181,13 +181,49 @@ impl Up {
         // Create executor
         let executor = MigrationExecutor::new(&client, &backend, &self.schema);
 
-        // Warn about --force usage
+        // When --force is used, still perform verification but warn instead of error
         if self.force && !matches!(self.format, OutputFormat::Json) {
-            println!();
-            println!("WARNING: Running with --force skips integrity verification.");
-            println!("This can result in schema corruption or data loss.");
-            println!("Only use this if you understand the risks.");
-            println!();
+            let status = executor
+                .check_integrity()
+                .await
+                .into_diagnostic()
+                .wrap_err("Failed to check integrity")?;
+
+            if status.all_ok() {
+                println!();
+                println!("Note: --force was unnecessary, all integrity checks passed.");
+                println!();
+            } else {
+                println!();
+                println!("WARNING: Integrity checks failed, but proceeding due to --force flag.");
+                println!();
+                if let Some(ref mismatch) = status.schema_mismatch {
+                    println!(
+                        "  Schema drift detected for migration {}...:",
+                        &mismatch.migration_id[..12.min(mismatch.migration_id.len())]
+                    );
+                    println!("    Expected checksum: {}", mismatch.expected);
+                    println!("    Actual checksum:   {}", mismatch.actual);
+                    println!();
+                }
+                if let Some(ref divergence) = status.history_diverged {
+                    println!(
+                        "  Migration history diverged for {}...:",
+                        &divergence.migration_id[..12.min(divergence.migration_id.len())]
+                    );
+                    println!(
+                        "    Expected hash: {}",
+                        &divergence.expected_hash[..16.min(divergence.expected_hash.len())]
+                    );
+                    println!(
+                        "    Actual hash:   {}",
+                        &divergence.actual_hash[..16.min(divergence.actual_hash.len())]
+                    );
+                    println!();
+                }
+                println!("Proceeding anyway. This can result in schema corruption or data loss.");
+                println!();
+            }
         }
 
         if self.dry_run {

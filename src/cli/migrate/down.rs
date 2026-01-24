@@ -158,15 +158,6 @@ impl Down {
         // Ensure tracking infrastructure exists
         tracker.ensure_schema().await.into_diagnostic()?;
 
-        // Warn about --force usage
-        if self.force && !matches!(self.format, OutputFormat::Json) {
-            println!();
-            println!("WARNING: Running with --force skips integrity verification.");
-            println!("This can result in schema corruption or data loss.");
-            println!("Only use this if you understand the risks.");
-            println!();
-        }
-
         // Get the current migration ID from the database
         let current_id = match tracker.get_current_migration_id().await.into_diagnostic()? {
             Some(id) => id,
@@ -198,25 +189,7 @@ impl Down {
                 )
             })?;
 
-        // Verify schema integrity (unless --force)
-        if !self.force {
-            tracker
-                .verify_schema_checksum(&current_id, &current_record.schema_hash)
-                .await
-                .map_err(|e| match e {
-                    ExecutionError::SchemaDrift { expected, actual, .. } => {
-                        miette::miette!(
-                            "Schema drift detected!\n\nThe live database schema does not match the expected state after migration {}.\n\n  Expected checksum: {}\n  Actual checksum:   {}\n\nThis indicates the database was modified outside of Tern migrations.\n\nTo investigate: tern verify --database-url <URL>\nTo resolve:\n  Option 1: Revert manual changes to match expected state\n  Option 2: Run `tern compile` to capture changes as a new migration\n  Option 3: Use `--force` to skip verification (dangerous)",
-                            &current_id[..12.min(current_id.len())],
-                            expected,
-                            actual
-                        )
-                    }
-                    other => miette::miette!("{}", other),
-                })?;
-        }
-
-        // Find the migration in the local backend
+        // Find the migration in the local backend (needed for both verification and execution)
         let migration = find_migration_by_hex_id(&backend, &current_id)
             .await
             .into_diagnostic()
@@ -232,10 +205,72 @@ impl Down {
             }
         };
 
-        // Verify migration hash matches what was applied (unless --force)
-        if !self.force {
-            let local_hash = compute_migration_hash(&migration);
-            if local_hash != current_record.migration_hash {
+        // Always perform verification, but handle results based on --force flag
+        let schema_verification = tracker
+            .verify_schema_checksum(&current_id, &current_record.schema_hash)
+            .await;
+
+        let local_hash = compute_migration_hash(&migration);
+        let hash_matches = local_hash == current_record.migration_hash;
+
+        // Determine if verification passed
+        let schema_ok = schema_verification.is_ok();
+        let all_ok = schema_ok && hash_matches;
+
+        if self.force && !matches!(self.format, OutputFormat::Json) {
+            if all_ok {
+                println!();
+                println!("Note: --force was unnecessary, all integrity checks passed.");
+                println!();
+            } else {
+                println!();
+                println!("WARNING: Integrity checks failed, but proceeding due to --force flag.");
+                println!();
+                if let Err(ExecutionError::SchemaDrift {
+                    expected, actual, ..
+                }) = &schema_verification
+                {
+                    println!(
+                        "  Schema drift detected for migration {}...:",
+                        &current_id[..12.min(current_id.len())]
+                    );
+                    println!("    Expected checksum: {}", expected);
+                    println!("    Actual checksum:   {}", actual);
+                    println!();
+                }
+                if !hash_matches {
+                    println!(
+                        "  Migration file modified for {}...:",
+                        &current_id[..12.min(current_id.len())]
+                    );
+                    println!(
+                        "    Expected hash: {}",
+                        &current_record.migration_hash
+                            [..16.min(current_record.migration_hash.len())]
+                    );
+                    println!(
+                        "    Actual hash:   {}",
+                        &local_hash[..16.min(local_hash.len())]
+                    );
+                    println!();
+                }
+                println!("Proceeding anyway. This can result in schema corruption or data loss.");
+                println!();
+            }
+        } else if !self.force {
+            // When not forcing, error on verification failure
+            if let Err(ExecutionError::SchemaDrift {
+                expected, actual, ..
+            }) = schema_verification
+            {
+                return Err(miette::miette!(
+                    "Schema drift detected!\n\nThe live database schema does not match the expected state after migration {}.\n\n  Expected checksum: {}\n  Actual checksum:   {}\n\nThis indicates the database was modified outside of Tern migrations.\n\nTo investigate: tern verify --database-url <URL>\nTo resolve:\n  Option 1: Revert manual changes to match expected state\n  Option 2: Run `tern compile` to capture changes as a new migration\n  Option 3: Use `--force` to skip verification (dangerous)",
+                    &current_id[..12.min(current_id.len())],
+                    expected,
+                    actual
+                ));
+            }
+            if !hash_matches {
                 return Err(miette::miette!(
                     "Migration file has been modified since it was applied!\n\nMigration {} has different content than what was recorded in the database.\n\n  Expected hash: {}\n  Actual hash:   {}\n\nThis migration was applied with different operations than what's on disk.\n\nTo resolve:\n  Option 1: Restore the original migration file from version control\n  Option 2: Use `--force` to skip verification (dangerous)\n\nWarning: Reverting with mismatched history can cause schema inconsistencies between environments.",
                     &current_id[..12.min(current_id.len())],
