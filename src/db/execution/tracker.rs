@@ -5,6 +5,8 @@
 
 use tokio_postgres::Client;
 
+use crate::db::checksum::compute_schema_checksum;
+use crate::db::query::{PostgresCatalog, load_namespace};
 use crate::db::state::MigrationId;
 
 use super::error::ExecutionError;
@@ -146,6 +148,64 @@ impl<'a> MigrationTracker<'a> {
             migration_hash: r.get(3),
             schema_hash: r.get(4),
         }))
+    }
+
+    /// Gets the schema_hash for a specific migration.
+    ///
+    /// Returns `None` if the migration is not found.
+    pub async fn get_schema_hash(
+        &self,
+        migration_id: &str,
+    ) -> Result<Option<String>, ExecutionError> {
+        let row = self
+            .client
+            .query_opt(
+                "SELECT schema_hash FROM tern.migrations WHERE id = $1",
+                &[&migration_id],
+            )
+            .await
+            .map_err(|e| ExecutionError::Query(e.to_string()))?;
+
+        Ok(row.map(|r| r.get(0)))
+    }
+
+    /// Verifies that the live database schema matches the expected checksum.
+    ///
+    /// This method loads the current database schema and computes its xxhash3
+    /// checksum, then compares it against the expected checksum (typically
+    /// from the last applied migration).
+    ///
+    /// # Arguments
+    ///
+    /// * `migration_id` - The ID of the migration whose schema hash we're comparing against
+    /// * `expected_checksum` - The expected xxhash3 checksum
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if checksums match, or `ExecutionError::SchemaDrift` if they differ.
+    pub async fn verify_schema_checksum(
+        &self,
+        migration_id: &str,
+        expected_checksum: &str,
+    ) -> Result<(), ExecutionError> {
+        // Load current namespace from database
+        let catalog = PostgresCatalog::new(self.client);
+        let namespace = load_namespace(&catalog, self.target_schema())
+            .await
+            .map_err(|e| ExecutionError::Query(e.to_string()))?;
+
+        // Compute actual checksum
+        let actual_checksum = compute_schema_checksum(&namespace);
+
+        if actual_checksum != expected_checksum {
+            return Err(ExecutionError::SchemaDrift {
+                migration_id: migration_id.to_string(),
+                expected: expected_checksum.to_string(),
+                actual: actual_checksum,
+            });
+        }
+
+        Ok(())
     }
 
     /// Gets the next sequence number for a new migration.

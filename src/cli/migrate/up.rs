@@ -40,6 +40,14 @@ pub struct Up {
     #[arg(long)]
     pub dry_run: bool,
 
+    /// Skip integrity verification (dangerous)
+    ///
+    /// This skips both schema checksum verification and migration hash
+    /// verification. Use only in emergency situations when you understand
+    /// the risks of schema corruption.
+    #[arg(long)]
+    pub force: bool,
+
     /// Output format
     #[arg(long, default_value = "text")]
     pub format: OutputFormat,
@@ -173,6 +181,15 @@ impl Up {
         // Create executor
         let executor = MigrationExecutor::new(&client, &backend, &self.schema);
 
+        // Warn about --force usage
+        if self.force && !matches!(self.format, OutputFormat::Json) {
+            println!();
+            println!("WARNING: Running with --force skips integrity verification.");
+            println!("This can result in schema corruption or data loss.");
+            println!("Only use this if you understand the risks.");
+            println!();
+        }
+
         if self.dry_run {
             // Just show pending migrations
             if !matches!(self.format, OutputFormat::Json) {
@@ -180,7 +197,7 @@ impl Up {
             }
 
             let pending = executor
-                .get_pending()
+                .get_pending(self.force)
                 .await
                 .into_diagnostic()
                 .wrap_err("Failed to get pending migrations")?;
@@ -221,7 +238,7 @@ impl Up {
             }
 
             let result = executor
-                .execute_pending()
+                .execute_pending(self.force)
                 .await
                 .into_diagnostic()
                 .wrap_err("Failed to execute migrations")?;

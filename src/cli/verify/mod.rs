@@ -21,8 +21,12 @@ use crate::db::{self};
 
 /// Verify state backend matches database
 ///
-/// Compares the state backend to the live database schema and
-/// reports any drift (manual changes not captured in migrations).
+/// Compares the live database schema against the schema hash recorded
+/// in `tern.migrations` for the current migration. This detects any
+/// manual changes made outside of Tern migrations.
+///
+/// By default, compares against the database's recorded schema_hash.
+/// Use --include-local-state to also compare against local state.json.
 #[derive(Debug, Clone, Args)]
 pub struct Verify {
     /// PostgreSQL connection string
@@ -40,6 +44,14 @@ pub struct Verify {
     /// Path to the state directory
     #[arg(long)]
     pub path: Option<PathBuf>,
+
+    /// Also compare against local state.json
+    ///
+    /// When enabled, additionally compares the database schema against
+    /// the local state.json file. This is useful for detecting if the
+    /// local state is out of sync with the database.
+    #[arg(long)]
+    pub include_local_state: bool,
 }
 
 /// Verify migration chain integrity
@@ -60,12 +72,10 @@ pub struct VerifyChain {
 impl Verify {
     /// Dispatch the verify command.
     pub async fn dispatch(self) -> miette::Result<()> {
-        // Load the state backend
-        let backend = load_backend(self.path.as_deref());
-        ensure_backend_initialized(&backend).await?;
-
         // Connect to database
-        println!("Connecting to database...");
+        if !matches!(self.format, OutputFormat::Json) {
+            println!("Connecting to database...");
+        }
         let client = db::connect(&self.database_url)
             .await
             .into_diagnostic()
@@ -73,41 +83,86 @@ impl Verify {
 
         let catalog = PostgresCatalog::new(&client);
 
-        println!("Verifying schema '{}'...", self.schema);
+        if !matches!(self.format, OutputFormat::Json) {
+            println!("Verifying schema '{}'...", self.schema);
+        }
 
-        // Get cached state (includes pre-computed xxhash3 checksum)
-        let cached_state = backend.get_cached_state().into_diagnostic()?;
-        let backend_checksum = cached_state.checksum().to_string();
-        let backend_state = cached_state.into_namespace();
+        // Get the current migration's expected schema_hash from DB
+        let tracker = crate::db::execution::MigrationTracker::new(&client, &self.schema);
+        tracker.ensure_schema().await.into_diagnostic()?;
+
+        let current_id = tracker.get_current_migration_id().await.into_diagnostic()?;
+        let expected_hash = if let Some(ref id) = current_id {
+            tracker.get_schema_hash(id).await.into_diagnostic()?
+        } else {
+            None
+        };
 
         // Load database state and compute its checksum
         let database_state = crate::db::query::load_namespace(&catalog, &self.schema)
             .await
             .into_diagnostic()?;
         let database_checksum = compute_schema_checksum(&database_state);
-
-        // Quick check using checksums first
-        let checksums_match = backend_checksum == database_checksum;
-
-        // Compute BLAKE3 state hashes for display
-        let backend_hash = StateHash::from_namespace(&backend_state);
         let database_hash = StateHash::from_namespace(&database_state);
 
-        // Compute drift details if checksums don't match
-        let drift_details = if !checksums_match {
+        // Primary check: compare against DB's recorded schema_hash
+        let db_verified = match (&expected_hash, &current_id) {
+            (Some(expected), Some(_)) => *expected == database_checksum,
+            (None, Some(_)) => {
+                // Migration exists but no schema_hash recorded (shouldn't happen normally)
+                if !matches!(self.format, OutputFormat::Json) {
+                    println!("Warning: Current migration has no recorded schema_hash");
+                }
+                true
+            }
+            (_, None) => {
+                // No migrations applied yet - nothing to verify against
+                true
+            }
+        };
+
+        // Optional: also compare against local state.json
+        let (local_verified, backend_checksum, backend_hash) = if self.include_local_state {
+            let backend = load_backend(self.path.as_deref());
+            ensure_backend_initialized(&backend).await?;
+
+            let cached_state = backend.get_cached_state().into_diagnostic()?;
+            let checksum = cached_state.checksum().to_string();
+            let backend_state = cached_state.into_namespace();
+            let hash = StateHash::from_namespace(&backend_state);
+            let verified = checksum == database_checksum;
+            (Some(verified), Some(checksum), Some(hash.to_hex()))
+        } else {
+            (None, None, None)
+        };
+
+        // Compute drift details if DB verification failed
+        let drift_details = if !db_verified && self.include_local_state {
+            let backend = load_backend(self.path.as_deref());
+            let cached_state = backend.get_cached_state().into_diagnostic()?;
+            let backend_state = cached_state.into_namespace();
             Some(compute_drift(&backend_state, &database_state))
         } else {
             None
         };
 
+        // Overall verification: passes if DB check passes (and local check if included)
+        let verified = db_verified && local_verified.unwrap_or(true);
+
         let output = VerifyOutput {
-            verified: checksums_match,
-            backend_state_hash: backend_hash.to_hex(),
+            verified,
+            backend_state_hash: backend_hash.unwrap_or_else(|| "N/A".to_string()),
             database_state_hash: database_hash.to_hex(),
-            backend_schema_checksum: backend_checksum,
-            database_schema_checksum: database_checksum,
-            message: if checksums_match {
-                "State backend is in sync with database.".to_string()
+            backend_schema_checksum: backend_checksum.unwrap_or_else(|| "N/A".to_string()),
+            database_schema_checksum: database_checksum.clone(),
+            expected_schema_checksum: expected_hash,
+            current_migration_id: current_id.clone(),
+            message: if verified {
+                if current_id.is_none() {
+                    "No migrations applied yet. Database schema is at initial state.".to_string()
+                } else {
+                    "Database schema matches the expected state.".to_string()
+                }
             } else {
                 "Database has been modified outside of Tern migrations.".to_string()
             },
@@ -120,7 +175,7 @@ impl Verify {
         }
 
         // Return error if verification failed (for CI usage)
-        if !checksums_match {
+        if !verified {
             std::process::exit(1);
         }
 
@@ -178,14 +233,20 @@ impl VerifyChain {
 pub struct VerifyOutput {
     /// Whether the verification passed.
     pub verified: bool,
-    /// State backend state hash (BLAKE3).
+    /// State backend state hash (BLAKE3). Only present with --include-local-state.
     pub backend_state_hash: String,
     /// Database state hash (BLAKE3).
     pub database_state_hash: String,
-    /// Schema checksum (xxhash3) for the backend state.
+    /// Schema checksum (xxhash3) for the backend state. Only present with --include-local-state.
     pub backend_schema_checksum: String,
     /// Schema checksum (xxhash3) for the database state.
     pub database_schema_checksum: String,
+    /// Expected schema checksum from tern.migrations table.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_schema_checksum: Option<String>,
+    /// Current migration ID from the database.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_migration_id: Option<String>,
     /// Detailed message.
     pub message: String,
     /// Drift details (if any).
@@ -302,31 +363,45 @@ impl std::fmt::Display for VerifyOutput {
             writeln!(f, "Verification Passed")?;
             writeln!(f, "===================")?;
             writeln!(f)?;
-            writeln!(f, "State backend matches database schema.")?;
+            writeln!(f, "{}", self.message)?;
             writeln!(f)?;
-            writeln!(f, "  State hash:     {}", &self.backend_state_hash[..16])?;
-            writeln!(f, "  Schema checksum: {}", &self.backend_schema_checksum)?;
+            if let Some(ref migration_id) = self.current_migration_id {
+                writeln!(
+                    f,
+                    "  Current migration: {}...",
+                    &migration_id[..12.min(migration_id.len())]
+                )?;
+            }
+            writeln!(f, "  Schema checksum:   {}", &self.database_schema_checksum)?;
+            if self.backend_state_hash != "N/A" {
+                writeln!(
+                    f,
+                    "  Local state hash:  {}...",
+                    &self.backend_state_hash[..16.min(self.backend_state_hash.len())]
+                )?;
+            }
         } else {
             writeln!(f, "Verification Failed")?;
             writeln!(f, "===================")?;
             writeln!(f)?;
             writeln!(f, "WARNING: Schema drift detected!")?;
             writeln!(f)?;
-            writeln!(f, "State Hashes (BLAKE3):")?;
-            writeln!(
-                f,
-                "  Backend:  {}",
-                &self.backend_state_hash[..std::cmp::min(16, self.backend_state_hash.len())]
-            )?;
-            writeln!(
-                f,
-                "  Database: {}",
-                &self.database_state_hash[..std::cmp::min(16, self.database_state_hash.len())]
-            )?;
+            if let Some(ref migration_id) = self.current_migration_id {
+                writeln!(
+                    f,
+                    "Current migration: {}...",
+                    &migration_id[..12.min(migration_id.len())]
+                )?;
+            }
             writeln!(f)?;
             writeln!(f, "Schema Checksums (xxhash3):")?;
-            writeln!(f, "  Backend:  {}", &self.backend_schema_checksum)?;
-            writeln!(f, "  Database: {}", &self.database_schema_checksum)?;
+            if let Some(ref expected) = self.expected_schema_checksum {
+                writeln!(f, "  Expected: {}", expected)?;
+            }
+            writeln!(f, "  Actual:   {}", &self.database_schema_checksum)?;
+            if self.backend_schema_checksum != "N/A" {
+                writeln!(f, "  Local:    {}", &self.backend_schema_checksum)?;
+            }
             writeln!(f)?;
             writeln!(f, "{}", self.message)?;
 
@@ -770,6 +845,10 @@ mod tests {
             database_state_hash: "a".repeat(64),
             backend_schema_checksum: "abc123def456".to_string(),
             database_schema_checksum: "abc123def456".to_string(),
+            expected_schema_checksum: Some("abc123def456".to_string()),
+            current_migration_id: Some(
+                "abc123def456789012345678901234567890123456789012345678901234".to_string(),
+            ),
             message: "All good".to_string(),
             drift_details: None,
         };
@@ -787,6 +866,10 @@ mod tests {
             database_state_hash: "b".repeat(64),
             backend_schema_checksum: "abc123def456".to_string(),
             database_schema_checksum: "def456abc123".to_string(),
+            expected_schema_checksum: Some("abc123def456".to_string()),
+            current_migration_id: Some(
+                "abc123def456789012345678901234567890123456789012345678901234".to_string(),
+            ),
             message: "Drift detected".to_string(),
             drift_details: Some(DriftDetails {
                 summary: DriftSummary {
@@ -877,6 +960,8 @@ mod tests {
             database_state_hash: "a".repeat(64),
             backend_schema_checksum: "abc123def456".to_string(),
             database_schema_checksum: "abc123def456".to_string(),
+            expected_schema_checksum: Some("abc123def456".to_string()),
+            current_migration_id: Some("migration123".to_string()),
             message: "All good".to_string(),
             drift_details: None,
         };
@@ -884,6 +969,7 @@ mod tests {
         let json = serde_json::to_string(&output).unwrap();
         assert!(json.contains("backend_schema_checksum"));
         assert!(json.contains("database_schema_checksum"));
+        assert!(json.contains("expected_schema_checksum"));
         assert!(json.contains("abc123def456"));
     }
 }

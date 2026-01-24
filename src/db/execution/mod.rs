@@ -60,7 +60,7 @@
 //!     let backend = LocalFileBackend::default_location();
 //!
 //!     let executor = MigrationExecutor::new(&client, &backend, "public");
-//!     let result = executor.execute_pending().await?;
+//!     let result = executor.execute_pending(false).await?;
 //!
 //!     println!("Applied {} migration(s)", result.count());
 //!     Ok(())
@@ -72,5 +72,5 @@ mod executor;
 mod tracker;
 
 pub use error::{ExecutionError, ExecutionResult, MigrationResult};
-pub use executor::MigrationExecutor;
+pub use executor::{MigrationExecutor, compute_migration_hash};
 pub use tracker::{MigrationRecord, MigrationTracker};

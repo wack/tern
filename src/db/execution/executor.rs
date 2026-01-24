@@ -55,21 +55,36 @@ impl<'a> MigrationExecutor<'a> {
     ///
     /// 1. Ensure tern schema and tracking tables exist
     /// 2. Get the current migration ID from the database
-    /// 3. Load local migrations and verify history integrity
-    /// 4. Identify pending migrations (those after current)
-    /// 5. For each pending migration:
+    /// 3. Verify schema integrity (unless force=true)
+    /// 4. Load local migrations and verify history integrity
+    /// 5. Identify pending migrations (those after current)
+    /// 6. For each pending migration:
     ///    a. Begin transaction
     ///    b. Render and execute SQL
     ///    c. Compute schema checksum
     ///    d. Record migration in tracking tables
     ///    e. Commit transaction
-    /// 6. Return execution result
-    pub async fn execute_pending(&self) -> Result<ExecutionResult, ExecutionError> {
+    /// 7. Return execution result
+    ///
+    /// # Arguments
+    ///
+    /// * `force` - If true, skip integrity verification checks
+    pub async fn execute_pending(&self, force: bool) -> Result<ExecutionResult, ExecutionError> {
         // Ensure tracking infrastructure exists
         self.tracker.ensure_schema().await?;
 
         // Get current state
         let current_id = self.tracker.get_current_migration_id().await?;
+
+        // Verify schema integrity before proceeding (unless force=true)
+        if !force
+            && let Some(ref id) = current_id
+            && let Some(expected_hash) = self.tracker.get_schema_hash(id).await?
+        {
+            self.tracker
+                .verify_schema_checksum(id, &expected_hash)
+                .await?;
+        }
 
         // Load all local migrations
         let all_migrations = self
@@ -78,8 +93,10 @@ impl<'a> MigrationExecutor<'a> {
             .await
             .map_err(|e| ExecutionError::InvalidState(e.to_string()))?;
 
-        // Verify history integrity
-        self.verify_history(&all_migrations).await?;
+        // Verify history integrity (unless force=true)
+        if !force {
+            self.verify_history(&all_migrations).await?;
+        }
 
         // Find pending migrations
         let pending = self.find_pending_migrations(&all_migrations, current_id.as_deref())?;
@@ -108,12 +125,26 @@ impl<'a> MigrationExecutor<'a> {
     /// Gets the list of pending migrations without executing them.
     ///
     /// Useful for dry-run mode.
-    pub async fn get_pending(&self) -> Result<Vec<Migration>, ExecutionError> {
+    ///
+    /// # Arguments
+    ///
+    /// * `force` - If true, skip integrity verification checks
+    pub async fn get_pending(&self, force: bool) -> Result<Vec<Migration>, ExecutionError> {
         // Ensure tracking infrastructure exists
         self.tracker.ensure_schema().await?;
 
         // Get current state
         let current_id = self.tracker.get_current_migration_id().await?;
+
+        // Verify schema integrity before proceeding (unless force=true)
+        if !force
+            && let Some(ref id) = current_id
+            && let Some(expected_hash) = self.tracker.get_schema_hash(id).await?
+        {
+            self.tracker
+                .verify_schema_checksum(id, &expected_hash)
+                .await?;
+        }
 
         // Load all local migrations
         let all_migrations = self
@@ -121,6 +152,11 @@ impl<'a> MigrationExecutor<'a> {
             .get_all_migrations()
             .await
             .map_err(|e| ExecutionError::InvalidState(e.to_string()))?;
+
+        // Verify history integrity (unless force=true)
+        if !force {
+            self.verify_history(&all_migrations).await?;
+        }
 
         // Find pending migrations
         self.find_pending_migrations(&all_migrations, current_id.as_deref())
@@ -256,7 +292,7 @@ impl<'a> MigrationExecutor<'a> {
 /// applied. Only the up_operations array is hashed, not the description or
 /// timestamps, allowing descriptions to be updated without triggering
 /// divergence errors.
-fn compute_migration_hash(migration: &Migration) -> String {
+pub fn compute_migration_hash(migration: &Migration) -> String {
     let mut hasher = blake3::Hasher::new();
     let ops_json =
         serde_json::to_vec(&migration.up_operations).expect("operations should be serializable");
