@@ -50,6 +50,10 @@ pub struct Import {
     #[arg(long)]
     pub dry_run: bool,
 
+    /// Skip integrity verification (dangerous)
+    #[arg(long)]
+    pub force: bool,
+
     /// Output format
     #[arg(long, default_value = "text")]
     pub format: OutputFormat,
@@ -164,14 +168,27 @@ impl std::fmt::Display for ImportOutput {
 impl Import {
     /// Dispatch the import command.
     pub async fn dispatch(self) -> miette::Result<()> {
+        // Extract all values at the start to avoid partial move issues
+        let force = self.force;
+        let dry_run = self.dry_run;
+        let format = self.format;
+        let description = self.description;
+        let schema = self.schema;
+        let path = self.path;
+
         // Resolve database URL (positional > --database-url > env)
         let db_url = self
             .url
             .or(self.database_url)
             .ok_or_else(|| miette::miette!("Database URL required. Provide as argument, --database-url, or set DATABASE_URL environment variable."))?;
 
-        let backend = load_backend(self.path.as_deref());
+        let backend = load_backend(path.as_deref());
         ensure_backend_initialized(&backend).await?;
+
+        // Verify local migration chain integrity (unless --force)
+        if !force {
+            verify_chain_integrity(&backend).await?;
+        }
 
         println!("Connecting to database...");
 
@@ -181,12 +198,17 @@ impl Import {
             .into_diagnostic()
             .wrap_err("Failed to connect to database")?;
 
+        // Verify migration hashes against database (unless --force)
+        if !force {
+            verify_migration_hashes(&backend, &client, &schema).await?;
+        }
+
         // Load the live database schema
         let catalog = PostgresCatalog::new(&client);
-        let live_schema = load_namespace(&catalog, &self.schema)
+        let live_schema = load_namespace(&catalog, &schema)
             .await
             .into_diagnostic()
-            .wrap_err_with(|| format!("Failed to load schema '{}' from database", self.schema))?;
+            .wrap_err_with(|| format!("Failed to load schema '{}' from database", schema))?;
 
         // Load the expected schema from migrations
         let expected_schema = backend.get_current_state().await.into_diagnostic()?;
@@ -200,9 +222,9 @@ impl Import {
             let output = ImportOutput {
                 has_changes: false,
                 migration_id: None,
-                description: self.description.clone(),
+                description: description.clone(),
                 operation_count: 0,
-                dry_run: self.dry_run,
+                dry_run,
                 summary: ImportSummary {
                     tables_added: 0,
                     tables_removed: 0,
@@ -217,7 +239,7 @@ impl Import {
                 },
             };
 
-            match self.format {
+            match format {
                 OutputFormat::Text => println!("{}", output),
                 OutputFormat::Json => print_json(&output),
                 OutputFormat::Sql => println!("-- No changes to import."),
@@ -263,7 +285,7 @@ impl Import {
         let down_operations = inverse_result.operations;
 
         let migration = Migration::new(
-            &self.description,
+            &description,
             plan.operations.clone(),
             down_operations,
             source_hash,
@@ -271,7 +293,7 @@ impl Import {
             breaking_changes,
         );
 
-        let migration_id = if !self.dry_run {
+        let migration_id = if !dry_run {
             // Record the migration
             backend
                 .record_migration(&migration, &live_schema)
@@ -286,14 +308,14 @@ impl Import {
         let output = ImportOutput {
             has_changes: true,
             migration_id,
-            description: self.description,
+            description,
             operation_count: migration.up_operations.len(),
-            dry_run: self.dry_run,
+            dry_run,
             summary,
         };
 
         // Output based on format
-        match self.format {
+        match format {
             OutputFormat::Text => println!("{}", output),
             OutputFormat::Json => print_json(&output),
             OutputFormat::Sql => {
@@ -306,6 +328,124 @@ impl Import {
 
         Ok(())
     }
+}
+
+/// Verifies the integrity of the local migration chain.
+///
+/// Checks that each migration's parent_state_hash matches the previous
+/// migration's resulting_state_hash.
+async fn verify_chain_integrity<B: StateBackend>(backend: &B) -> miette::Result<()> {
+    use crate::db::state::StateError;
+
+    match backend.verify_chain().await {
+        Ok(()) => Ok(()),
+        Err(StateError::BrokenChain {
+            id,
+            parent,
+            expected,
+        }) => Err(miette::miette!(
+            "Migration chain integrity check failed\n\n\
+             Migration {} has an invalid parent hash.\n\n\
+             Expected parent: {}...\n\
+             Actual parent:   {}...\n\n\
+             This indicates the migration file was modified or corrupted.\n\n\
+             To resolve:\n  \
+             Option 1: Restore the migration from version control\n  \
+             Option 2: Run 'tern verify chain' for detailed diagnostics\n  \
+             Option 3: Use --force to skip verification (dangerous)",
+            &id.to_hex()[..16.min(id.to_hex().len())],
+            &expected.to_hex()[..16.min(expected.to_hex().len())],
+            &parent.to_hex()[..16.min(parent.to_hex().len())],
+        )),
+        Err(e) => Err(miette::miette!("Failed to verify migration chain: {}", e)),
+    }
+}
+
+/// Verifies that local migration files match what was applied to the database.
+///
+/// Compares the BLAKE3 hash of each local migration's up_operations against
+/// the migration_hash stored in the tern.migrations table.
+async fn verify_migration_hashes<B: StateBackend>(
+    backend: &B,
+    client: &tokio_postgres::Client,
+    target_schema: &str,
+) -> miette::Result<()> {
+    use crate::db::execution::{MigrationTracker, compute_migration_hash};
+
+    let tracker = MigrationTracker::new(client, target_schema);
+
+    // Check if tracking tables exist (fresh database)
+    if tracker.ensure_schema().await.is_err() {
+        // Fresh database, nothing to verify against
+        return Ok(());
+    }
+
+    // Get all recorded migrations from the database
+    let recorded = match tracker.get_all_migrations().await {
+        Ok(migrations) => migrations,
+        Err(_) => {
+            // No tern.migrations table, nothing to verify
+            return Ok(());
+        }
+    };
+
+    // If no migrations recorded, nothing to verify
+    if recorded.is_empty() {
+        return Ok(());
+    }
+
+    // Load all local migrations
+    let local_migrations = backend.get_all_migrations().await.into_diagnostic()?;
+
+    // Check if database has more migrations than local
+    let local_count = local_migrations.len();
+    let recorded_count = recorded.len();
+
+    if recorded_count > local_count {
+        return Err(miette::miette!(
+            "Database has migrations not present locally\n\n\
+             The database has {} migrations applied, but only {} are present locally.\n\
+             Your local migration history is behind the database.\n\n\
+             To resolve:\n  \
+             Pull the latest migrations from your team's repository.",
+            recorded_count,
+            local_count
+        ));
+    }
+
+    // Build hash map of local migrations
+    let local_hashes: Vec<(crate::db::state::MigrationId, String)> = local_migrations
+        .iter()
+        .map(|m| (m.id, compute_migration_hash(m)))
+        .collect();
+
+    // Verify each recorded migration
+    let diverged = tracker
+        .verify_history(&local_hashes)
+        .await
+        .map_err(|e| miette::miette!("Failed to verify migration history: {}", e))?;
+
+    if let Some((id, expected, actual)) = diverged.first() {
+        return Err(miette::miette!(
+            "Local migration files don't match applied migrations\n\n\
+             Migration {} has been modified since it was applied to this database.\n\n\
+             Applied hash:  {}...\n\
+             Local hash:    {}...\n\n\
+             The local migration file differs from what was applied to the database.\n\
+             Running 'import' would generate an incorrect migration.\n\n\
+             To resolve:\n  \
+             Option 1: Restore the migration from version control\n  \
+             Option 2: Pull the correct migration files from the team\n  \
+             Option 3: Use --force to skip verification (dangerous)\n\n\
+             Warning: Proceeding with mismatched migrations can cause schema\n\
+             inconsistencies between environments.",
+            &id[..16.min(id.len())],
+            &expected[..16.min(expected.len())],
+            &actual[..16.min(actual.len())],
+        ));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -416,5 +556,87 @@ mod tests {
         let json = serde_json::to_string(&output).unwrap();
         assert!(json.contains("\"has_changes\":true"));
         assert!(json.contains("\"migration_id\":\"abc\""));
+    }
+
+    mod chain_verification_tests {
+        use super::*;
+        use crate::db::model::Namespace;
+        use crate::db::state::{InMemoryBackend, Migration, StateHash};
+
+        #[tokio::test]
+        async fn verify_chain_integrity_passes_for_valid_chain() {
+            let backend = InMemoryBackend::new();
+            backend.initialize().await.unwrap();
+
+            let ns = Namespace::empty("public");
+            let m1 = Migration::baseline(ns);
+            backend.save_migration(&m1).await.unwrap();
+
+            let m2 = Migration::new(
+                "Second",
+                vec![],
+                vec![],
+                m1.resulting_state_hash,
+                StateHash::from_bytes([22u8; 32]),
+                vec![],
+            );
+            backend.save_migration(&m2).await.unwrap();
+
+            // Should pass without error
+            let result = verify_chain_integrity(&backend).await;
+            assert!(result.is_ok());
+        }
+
+        #[tokio::test]
+        async fn verify_chain_integrity_fails_for_broken_chain() {
+            let backend = InMemoryBackend::new();
+            backend.initialize().await.unwrap();
+
+            let ns = Namespace::empty("public");
+            let m1 = Migration::baseline(ns);
+            backend.save_migration(&m1).await.unwrap();
+
+            // Create a migration with wrong parent hash
+            let m2 = Migration::new(
+                "Second",
+                vec![],
+                vec![],
+                StateHash::from_bytes([99u8; 32]), // Wrong parent hash
+                StateHash::from_bytes([22u8; 32]),
+                vec![],
+            );
+            backend.save_migration(&m2).await.unwrap();
+
+            // Should fail with error message
+            let result = verify_chain_integrity(&backend).await;
+            assert!(result.is_err());
+            let err = result.unwrap_err().to_string();
+            assert!(err.contains("Migration chain integrity check failed"));
+            assert!(err.contains("invalid parent hash"));
+        }
+
+        #[tokio::test]
+        async fn verify_chain_integrity_passes_for_empty_history() {
+            let backend = InMemoryBackend::new();
+            backend.initialize().await.unwrap();
+
+            // Empty history should pass (nothing to verify)
+            let result = verify_chain_integrity(&backend).await;
+            assert!(result.is_ok());
+        }
+
+        #[tokio::test]
+        async fn verify_chain_integrity_passes_for_single_migration() {
+            let backend = InMemoryBackend::new();
+            backend.initialize().await.unwrap();
+
+            let ns = Namespace::empty("public");
+            let m1 = Migration::baseline(ns);
+            backend.save_migration(&m1).await.unwrap();
+
+            // Single migration should pass
+            let result = verify_chain_integrity(&backend).await;
+            assert!(result.is_ok());
+        }
     }
 }
