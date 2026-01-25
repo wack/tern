@@ -7,6 +7,7 @@ pub mod build;
 pub mod check;
 mod colors;
 pub mod compile;
+pub mod export;
 pub mod generate;
 pub mod history;
 pub mod import;
@@ -204,11 +205,19 @@ pub enum CliCommand {
     /// parent-child relationships (chain integrity).
     VerifyChain(verify::VerifyChain),
 
-    /// Schema management commands
+    /// Export the current schema as SQL DDL
+    ///
+    /// Generates a schema.sql file containing SQL DDL statements that
+    /// would recreate the current schema from scratch. This file is
+    /// useful for viewing the schema, documentation, and the model-first
+    /// migration workflow.
+    Export(export::Export),
+
+    /// [DEPRECATED] Schema management commands (use 'tern export' instead)
     ///
     /// Commands for working with the schema DDL file, which forms the
     /// foundation of the model-first migration workflow.
-    #[command(subcommand)]
+    #[command(subcommand, hide = true)]
     Schema(SchemaAction),
 
     // =========================================================================
@@ -268,12 +277,13 @@ pub enum CheckAction {
 /// users to work with the schema as SQL DDL.
 #[derive(Debug, Subcommand, Clone)]
 pub enum SchemaAction {
-    /// Export the current schema as SQL DDL
+    /// [DEPRECATED] Export the current schema as SQL DDL (use 'tern export' instead)
     ///
     /// Generates a schema.sql file containing SQL DDL statements that
     /// would recreate the current schema from scratch. This file is
     /// useful for viewing the schema, documentation, and the model-first
     /// migration workflow.
+    #[command(hide = true)]
     Export(schema::export::Export),
 
     /// [DEPRECATED] Show diff between current state and edited schema.sql (use 'tern check schema' instead)
@@ -309,6 +319,7 @@ impl CliCommand {
             CliCommand::Show(args) => args.dispatch().await,
             CliCommand::Verify(args) => args.dispatch().await,
             CliCommand::VerifyChain(args) => args.dispatch().await,
+            CliCommand::Export(args) => args.dispatch().await,
             CliCommand::Schema(action) => action.dispatch().await,
             CliCommand::PrintMigrations(args) => args.dispatch().await,
             CliCommand::Compile(args) => args.dispatch().await,
