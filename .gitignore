@@ -24,3 +24,7 @@ target
 # Added by cargo
 
 /target
+
+# PGLite runtime temporary files
+# TODO: Remove once pglite_oxide uses OS tempdir (https://github.com/pglite-dev/pglite-oxide/issues/XXX)
+tmp/

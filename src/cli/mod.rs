@@ -13,6 +13,7 @@ pub mod history;
 pub mod import;
 pub mod init;
 pub mod inspect;
+pub mod mcp;
 pub mod migrate;
 pub mod print_migrations;
 pub mod record;
@@ -213,6 +214,13 @@ pub enum CliCommand {
     /// migration workflow.
     Export(export::Export),
 
+    /// Start the MCP server for AI-assisted migration authoring
+    ///
+    /// The MCP (Model Context Protocol) server enables AI assistants to
+    /// interact with Tern's migration system. It provides tools for
+    /// creating and validating migrations through a structured protocol.
+    Mcp(mcp::Mcp),
+
     /// [DEPRECATED] Schema management commands (use 'tern export' instead)
     ///
     /// Commands for working with the schema DDL file, which forms the
@@ -320,6 +328,7 @@ impl CliCommand {
             CliCommand::Verify(args) => args.dispatch().await,
             CliCommand::VerifyChain(args) => args.dispatch().await,
             CliCommand::Export(args) => args.dispatch().await,
+            CliCommand::Mcp(args) => args.dispatch().await,
             CliCommand::Schema(action) => action.dispatch().await,
             CliCommand::PrintMigrations(args) => args.dispatch().await,
             CliCommand::Compile(args) => args.dispatch().await,
