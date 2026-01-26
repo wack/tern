@@ -9,8 +9,12 @@ use serde_json::{Value, json};
 #[cfg(feature = "pglite")]
 use crate::db::diff::diff_namespaces;
 #[cfg(feature = "pglite")]
+use crate::db::migrate::{MigrationPlan, Operation, PostgresRenderer, RenderConfig, Renderer};
+#[cfg(feature = "pglite")]
 use crate::db::query::{PostgresCatalog, load_namespace};
 use crate::db::state::StateHash;
+#[cfg(feature = "pglite")]
+use crate::db::state::{Migration, StateBackend};
 use crate::mcp::error::{McpError, SessionId};
 use crate::mcp::protocol::Tool;
 use crate::mcp::resources::SchemaResource;
@@ -588,9 +592,62 @@ pub async fn handle_execute_sql(
 }
 
 /// Handles the apply_operation tool.
-///
-/// Note: This is a stub implementation. Full implementation requires
-/// operation parsing and PGLite execution.
+#[cfg(feature = "pglite")]
+pub async fn handle_apply_operation(
+    input: ApplyOperationInput,
+    session_manager: &mut SessionManager,
+) -> Result<Value, McpError> {
+    let session_id = SessionId::new(input.session_id);
+
+    // Parse the operation from JSON
+    let operation: Operation = serde_json::from_value(input.operation.clone())
+        .map_err(|e| McpError::InvalidParams(format!("invalid operation: {e}")))?;
+
+    // Ensure the session's PGLite database is initialized
+    session_manager
+        .ensure_session_initialized(&session_id)
+        .await?;
+
+    let session = session_manager
+        .get_session_mut(&session_id)
+        .ok_or_else(|| McpError::SessionNotFound(session_id.clone()))?;
+
+    // Render the operation to SQL
+    let renderer = PostgresRenderer::new(RenderConfig::default());
+    let rendered = renderer.render(&operation);
+    let sql = rendered.forward.join(";\n");
+
+    // Get the PGLite client for this session
+    let client = session.get_client().await?;
+
+    // Execute the SQL
+    match client.batch_execute(&sql).await {
+        Ok(()) => {
+            // Record the operation in history
+            session.record_operation(operation, sql.clone());
+
+            let output = ApplyOperationOutput {
+                success: true,
+                sql_executed: Some(sql),
+                message: "Operation applied successfully".to_string(),
+            };
+
+            serde_json::to_value(output).map_err(|e| McpError::InternalError(e.to_string()))
+        }
+        Err(e) => {
+            let output = ApplyOperationOutput {
+                success: false,
+                sql_executed: Some(sql),
+                message: format!("Operation failed: {e}"),
+            };
+
+            serde_json::to_value(output).map_err(|e| McpError::InternalError(e.to_string()))
+        }
+    }
+}
+
+/// Handles the apply_operation tool (non-pglite version).
+#[cfg(not(feature = "pglite"))]
 pub async fn handle_apply_operation(
     input: ApplyOperationInput,
     session_manager: &mut SessionManager,
@@ -600,12 +657,10 @@ pub async fn handle_apply_operation(
         .get_session_mut(&session_id)
         .ok_or(McpError::SessionNotFound(session_id))?;
 
-    // For now, return an error indicating this needs implementation
     let output = ApplyOperationOutput {
         success: false,
         sql_executed: None,
-        message: "apply_operation requires full PGLite integration (not yet implemented)"
-            .to_string(),
+        message: "apply_operation requires PGLite feature to be enabled".to_string(),
     };
 
     serde_json::to_value(output).map_err(|e| McpError::InternalError(e.to_string()))
@@ -801,6 +856,145 @@ pub async fn handle_get_session_diff(
 }
 
 /// Handles the generate_migration tool.
+#[cfg(feature = "pglite")]
+pub async fn handle_generate_migration(
+    input: GenerateMigrationInput,
+    session_manager: &mut SessionManager,
+) -> Result<Value, McpError> {
+    let session_id = SessionId::new(input.session_id);
+
+    // Ensure the session's PGLite database is initialized
+    session_manager
+        .ensure_session_initialized(&session_id)
+        .await?;
+
+    // Get the session's base state and description
+    let (base_state, description, parent_hash) = {
+        let session = session_manager
+            .get_session(&session_id)
+            .ok_or_else(|| McpError::SessionNotFound(session_id.clone()))?;
+
+        if !session.has_changes() && !input.force {
+            return Err(McpError::NoChanges);
+        }
+
+        let desc = input
+            .description
+            .clone()
+            .unwrap_or_else(|| session.description.clone());
+        let parent = StateHash::from_namespace(&session.base_state);
+        (session.base_state.clone(), desc, parent)
+    };
+
+    // Get the current schema from the session's PGLite database
+    let current_state = {
+        let session = session_manager
+            .get_session(&session_id)
+            .ok_or_else(|| McpError::SessionNotFound(session_id.clone()))?;
+        let client = session.get_client().await?;
+        let catalog = PostgresCatalog::new(&client);
+        load_namespace(&catalog, "public")
+            .await
+            .map_err(|e| McpError::InternalError(format!("failed to load schema: {e}")))?
+    };
+
+    // Diff against base state
+    let diff = diff_namespaces(&base_state, &current_state);
+
+    // Check for breaking changes
+    let mut breaking_changes = Vec::new();
+    for table_name in &diff.tables.removed {
+        breaking_changes.push(format!("Table '{}' removed", table_name.as_ref()));
+    }
+    for modified in &diff.tables.modified {
+        for col_name in &modified.columns.removed {
+            breaking_changes.push(format!(
+                "Column '{}.{}' removed",
+                modified.name.as_ref(),
+                col_name.as_ref()
+            ));
+        }
+    }
+    for enum_name in &diff.enums.removed {
+        breaking_changes.push(format!("Enum '{}' removed", enum_name.as_ref()));
+    }
+
+    if !breaking_changes.is_empty() && !input.force {
+        return Err(McpError::BreakingChangesDetected { breaking_changes });
+    }
+
+    // Convert diff to migration plan
+    let plan = MigrationPlan::from_diff(&diff);
+
+    if plan.is_empty() && !input.force {
+        return Err(McpError::NoChanges);
+    }
+
+    // Calculate resulting state hash
+    let resulting_hash = StateHash::from_namespace(&current_state);
+
+    // Create the migration
+    let migration = Migration::new(
+        &description,
+        plan.operations.clone(),
+        vec![], // down_operations would require inverse operation generation
+        parent_hash,
+        resulting_hash,
+        vec![], // breaking_changes as BreakingChange structs (simplified for now)
+    );
+
+    // Save the migration
+    let backend = session_manager.backend();
+    let migration_index = backend
+        .get_migration_index()
+        .await
+        .map_err(|e| McpError::InternalError(format!("failed to get migration index: {e}")))?;
+    let sequence_number = migration_index.len() + 1;
+
+    backend
+        .save_migration(&migration)
+        .await
+        .map_err(|e| McpError::SaveFailed(e.to_string()))?;
+
+    // Save the current state
+    backend
+        .save_current_state(&current_state)
+        .await
+        .map_err(|e| McpError::SaveFailed(format!("failed to save current state: {e}")))?;
+
+    // Get the migration file path
+    let migrations_dir = backend.root().join("migrations");
+    let file_path = migrations_dir
+        .join(format!("{:05}.json", sequence_number))
+        .to_string_lossy()
+        .to_string();
+
+    // Remove the session
+    let _ = session_manager.cancel_session(&session_id).await;
+
+    let output = GenerateMigrationOutput {
+        success: true,
+        migration_id: migration.id.to_hex(),
+        sequence_number,
+        description,
+        file_path,
+        operation_count: plan.operations.len(),
+        has_breaking_changes: !breaking_changes.is_empty(),
+        breaking_changes,
+        is_reversible: false, // Would need inverse operation generation
+        session_ended: true,
+        message: format!(
+            "Migration {} created with {} operations",
+            migration.id.to_hex(),
+            plan.operations.len()
+        ),
+    };
+
+    serde_json::to_value(output).map_err(|e| McpError::InternalError(e.to_string()))
+}
+
+/// Handles the generate_migration tool (non-pglite version).
+#[cfg(not(feature = "pglite"))]
 pub async fn handle_generate_migration(
     input: GenerateMigrationInput,
     session_manager: &mut SessionManager,
@@ -818,7 +1012,6 @@ pub async fn handle_generate_migration(
         }
     }
 
-    // For now, return an error indicating this needs implementation
     let output = GenerateMigrationOutput {
         success: false,
         migration_id: "".to_string(),
@@ -830,8 +1023,7 @@ pub async fn handle_generate_migration(
         breaking_changes: vec![],
         is_reversible: false,
         session_ended: false,
-        message: "generate_migration requires full PGLite integration (not yet implemented)"
-            .to_string(),
+        message: "generate_migration requires PGLite feature to be enabled".to_string(),
     };
 
     serde_json::to_value(output).map_err(|e| McpError::InternalError(e.to_string()))
