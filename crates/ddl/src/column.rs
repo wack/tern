@@ -2,9 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::db::schema::ColumnName;
-
-use super::types::{Comment, QualifiedCollationName, SqlExpr, TypeInfo};
+use crate::schema::ColumnName;
+use crate::types::{Comment, QualifiedCollationName, SqlExpr, TypeInfo};
 
 /// A column definition within a table.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

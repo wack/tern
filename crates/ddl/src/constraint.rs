@@ -2,9 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::db::schema::{ColumnName, ConstraintName, IndexName};
-
-use super::types::{Comment, ForeignKeyAction, IndexMethod, QualifiedTableName, SqlExpr};
+use crate::schema::{ColumnName, ConstraintName, IndexName};
+use crate::types::{Comment, ForeignKeyAction, IndexMethod, QualifiedTableName, SqlExpr};
 
 /// A table constraint.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,7 +113,8 @@ pub struct ExclusionElement {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::schema::SchemaName;
+    use crate::schema::SchemaName;
+    use crate::types::QualifiedName;
 
     #[test]
     fn primary_key_constraint() {
@@ -134,8 +134,7 @@ mod tests {
 
     #[test]
     fn foreign_key_constraint() {
-        use crate::db::model::types::QualifiedName;
-        use crate::db::schema::TableName;
+        use crate::schema::TableName;
 
         let fk = ForeignKeyConstraint {
             columns: vec![ColumnName::try_new("user_id".to_string()).unwrap()],

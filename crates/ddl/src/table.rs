@@ -2,12 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::db::schema::{Oid, TableName};
-
-use super::column::Column;
-use super::constraint::Constraint;
-use super::index::Index;
-use super::types::Comment;
+use crate::column::Column;
+use crate::constraint::Constraint;
+use crate::index::Index;
+use crate::schema::{Oid, TableName};
+use crate::types::Comment;
 
 /// A table definition.
 ///

@@ -7,14 +7,8 @@
 //! - **Comparable**: Can diff two schemas to detect changes
 //! - **Complete**: Captures enough detail to regenerate DDL
 //!
-//! # Module Structure
-//!
-//! - [`types`]: Primitive types used across the model (expressions, type info, etc.)
-//! - [`column`]: Column definitions with type, default, identity, and generation info
-//! - [`constraint`]: Constraint definitions (primary key, foreign key, unique, check, exclusion)
-//! - [`index`]: Index definitions with columns, sort order, and predicates
-//! - [`table`]: Table definitions aggregating columns, constraints, and indexes
-//! - [`namespace`]: Schema (namespace) definitions containing tables, views, sequences, and enums
+//! Core DDL types (Table, Column, Constraint, Index) are re-exported from `tern_ddl`.
+//! Additional namespace-level types (Namespace, View, Sequence, EnumType) are defined here.
 //!
 //! # Example
 //!
@@ -55,12 +49,28 @@
 //! };
 //! ```
 
-pub mod column;
-pub mod constraint;
-pub mod index;
 pub mod namespace;
-pub mod table;
-pub mod types;
+
+// Re-export DDL types from tern-ddl
+pub mod column {
+    pub use tern_ddl::column::*;
+}
+
+pub mod constraint {
+    pub use tern_ddl::constraint::*;
+}
+
+pub mod index {
+    pub use tern_ddl::index::*;
+}
+
+pub mod table {
+    pub use tern_ddl::table::*;
+}
+
+pub mod types {
+    pub use tern_ddl::types::*;
+}
 
 // Re-export main types for convenience
 pub use column::{Column, GeneratedColumn, GeneratedStorage, IdentityKind};
