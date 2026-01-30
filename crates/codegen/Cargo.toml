@@ -4,4 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+genco = "0.19.0"
 tern-ddl = { path = "../ddl" }
