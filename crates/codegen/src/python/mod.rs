@@ -24,6 +24,7 @@ mod generator;
 mod imports;
 mod model;
 mod naming;
+mod relationship;
 mod type_mapping;
 
 #[cfg(test)]

@@ -106,10 +106,17 @@ impl PythonType {
 pub fn map_pg_type(type_info: &TypeInfo) -> PythonType {
     let type_name = type_info.name.as_ref();
     let formatted = &type_info.formatted;
+    let schema = type_info.schema.as_ref();
 
     // Handle array types first
     if type_info.is_array {
         return map_array_type(type_name, formatted);
+    }
+
+    // Check if this is a user-defined type (non-system schema)
+    // User-defined types include enums, composite types, and domains
+    if !is_system_schema(schema) {
+        return map_user_defined_type(type_name, schema);
     }
 
     // Map based on type name (canonical PostgreSQL type names)
@@ -206,6 +213,45 @@ pub fn map_pg_type(type_info: &TypeInfo) -> PythonType {
             // For now, map unknown types to Any
             PythonType::with_imports("Any", vec![PythonImport::typing("Any")])
         }
+    }
+}
+
+/// Checks if a schema is a PostgreSQL system schema.
+fn is_system_schema(schema: &str) -> bool {
+    matches!(
+        schema,
+        "pg_catalog" | "pg_toast" | "information_schema" | "pg_temp"
+    )
+}
+
+/// Maps a user-defined PostgreSQL type to a Python type.
+///
+/// User-defined types include:
+/// - Enum types (should map to Python Enum or Literal)
+/// - Composite types (should map to TypedDict or dataclass)
+/// - Domain types (should map to their base type with validation)
+///
+/// Since we don't have access to enum values at this point, we generate
+/// a `str` type with a note about the original type. When enum values
+/// become available through the Codegen API, this can be enhanced to
+/// generate proper Python Enum or Literal types.
+fn map_user_defined_type(_type_name: &str, _schema: &str) -> PythonType {
+    // For now, map user-defined types to str as a safe fallback.
+    // This allows the code to work with any string value.
+    //
+    // Future enhancement: When the Codegen trait is extended to include enum definitions,
+    // this function can be updated to generate:
+    // - `Literal["value1", "value2", ...]` for enums
+    // - Python Enum classes for enums with generate_enum_classes config
+    // - TypedDict or dataclass for composite types
+    //
+    // The type_name and schema parameters are preserved for future use
+    // when enum values become available through the Codegen API.
+    PythonType {
+        annotation: "str".to_string(),
+        imports: Vec::new(),
+        sa_type: None,
+        sa_imports: Vec::new(),
     }
 }
 
@@ -514,5 +560,42 @@ mod tests {
         let py_type = map_pg_type(&type_info);
         assert_eq!(py_type.annotation, "Any");
         assert!(py_type.imports.iter().any(|i| i.name == "Any"));
+    }
+
+    #[test]
+    fn test_user_defined_enum_type() {
+        // User-defined types from non-system schemas should map to str
+        let type_info = TypeInfo {
+            name: TypeName::try_new("user_status".to_string()).unwrap(),
+            schema: SchemaName::try_new("public".to_string()).unwrap(),
+            formatted: "user_status".to_string(),
+            is_array: false,
+        };
+        let py_type = map_pg_type(&type_info);
+        // User-defined types map to str as a safe fallback
+        assert_eq!(py_type.annotation, "str");
+        assert!(py_type.imports.is_empty());
+    }
+
+    #[test]
+    fn test_user_defined_type_from_custom_schema() {
+        let type_info = TypeInfo {
+            name: TypeName::try_new("order_status".to_string()).unwrap(),
+            schema: SchemaName::try_new("my_app".to_string()).unwrap(),
+            formatted: "order_status".to_string(),
+            is_array: false,
+        };
+        let py_type = map_pg_type(&type_info);
+        assert_eq!(py_type.annotation, "str");
+    }
+
+    #[test]
+    fn test_is_system_schema() {
+        assert!(is_system_schema("pg_catalog"));
+        assert!(is_system_schema("pg_toast"));
+        assert!(is_system_schema("information_schema"));
+        assert!(is_system_schema("pg_temp"));
+        assert!(!is_system_schema("public"));
+        assert!(!is_system_schema("my_app"));
     }
 }

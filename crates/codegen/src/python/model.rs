@@ -1,6 +1,7 @@
 //! SQLModel class generation.
 //!
 //! This module handles generating complete SQLModel class definitions from table schemas.
+//! Also supports generating Pydantic-only base models for validation without DB coupling.
 
 use tern_ddl::{ConstraintKind, Table};
 
@@ -8,6 +9,11 @@ use super::PythonCodegenConfig;
 use super::field::{FieldContext, FieldInfo, format_field_line, generate_field};
 use super::imports::ImportCollector;
 use super::naming::to_class_name;
+use super::relationship::{
+    RelationshipInfo, add_relationship_imports, format_relationship_line,
+    generate_back_relationships, generate_relationships,
+};
+use super::type_mapping::PythonImport;
 
 /// Information about a generated SQLModel class.
 #[derive(Debug)]
@@ -28,10 +34,39 @@ pub struct ModelInfo {
     pub has_columns: bool,
     /// Warning messages for unsupported features.
     pub warnings: Vec<String>,
+    /// Base model info (when generate_base_models is enabled).
+    pub base_model: Option<BaseModelInfo>,
+    /// Relationship information (when generate_relationships is enabled).
+    pub relationships: Vec<RelationshipInfo>,
+}
+
+/// Information about a generated Pydantic base model.
+///
+/// Base models are Pydantic-only classes without database coupling,
+/// useful for request/response validation in APIs.
+#[derive(Debug)]
+pub struct BaseModelInfo {
+    /// The Python class name (e.g., "UserBase").
+    pub class_name: String,
+    /// Fields for the base model (excludes PKs and FKs).
+    pub fields: Vec<FieldInfo>,
+    /// Required imports for the base model.
+    /// Note: Currently merged into the main model's imports, but kept for future use.
+    #[allow(dead_code)]
+    pub imports: ImportCollector,
+    /// Docstring for the class.
+    pub docstring: Option<String>,
 }
 
 /// Generates model information for a table.
-pub fn generate_model(table: &Table, config: &PythonCodegenConfig) -> ModelInfo {
+///
+/// When `generate_relationships` is enabled, pass all tables to correctly
+/// generate back_populates relationships.
+pub fn generate_model(
+    table: &Table,
+    config: &PythonCodegenConfig,
+    all_tables: Option<&[Table]>,
+) -> ModelInfo {
     let table_name = table.name.as_ref().to_string();
     let class_name = to_class_name(&table_name);
 
@@ -92,6 +127,35 @@ pub fn generate_model(table: &Table, config: &PythonCodegenConfig) -> ModelInfo 
         ));
     }
 
+    // Generate base model if configured
+    let base_model = if config.generate_base_models && has_columns {
+        Some(generate_base_model_info(&class_name, &fields, &docstring))
+    } else {
+        None
+    };
+
+    // Add BaseModel import if we're generating base models
+    if base_model.is_some() {
+        imports.add(&PythonImport::new("pydantic", "BaseModel"));
+    }
+
+    // Generate relationships if configured
+    let relationships = if config.generate_relationships {
+        let tables = all_tables.unwrap_or(&[]);
+        let mut rels = generate_relationships(table, tables, true);
+
+        // Also add back-relationships (the "one" side of one-to-many)
+        let back_rels = generate_back_relationships(table, tables);
+        rels.extend(back_rels);
+
+        // Add relationship imports
+        add_relationship_imports(&mut imports, &rels);
+
+        rels
+    } else {
+        Vec::new()
+    };
+
     ModelInfo {
         class_name,
         table_name,
@@ -100,7 +164,50 @@ pub fn generate_model(table: &Table, config: &PythonCodegenConfig) -> ModelInfo 
         table_args,
         docstring,
         has_columns,
+        base_model,
+        relationships,
         warnings,
+    }
+}
+
+/// Generates base model information for Pydantic-only validation models.
+///
+/// Base models exclude:
+/// - Primary key fields (these are auto-generated in the DB)
+/// - Foreign key fields (these are DB-specific)
+///
+/// This produces classes suitable for request/response validation in APIs.
+fn generate_base_model_info(
+    class_name: &str,
+    fields: &[FieldInfo],
+    docstring: &Option<String>,
+) -> BaseModelInfo {
+    let base_class_name = format!("{}Base", class_name);
+
+    // Filter fields: exclude PKs and FKs
+    // Base model fields should be simpler (no Field() with db-specific params)
+    let base_fields: Vec<FieldInfo> = fields
+        .iter()
+        .filter(|f| !f.is_primary_key && f.foreign_key.is_none())
+        .cloned()
+        .collect();
+
+    // Collect imports needed for base model fields
+    let mut imports = ImportCollector::new();
+    for field in &base_fields {
+        imports.merge(&field.imports);
+    }
+
+    let docstring = docstring
+        .as_ref()
+        .map(|d| format!("Base model for {}. {}", class_name, d))
+        .or_else(|| Some(format!("Base model for {} validation.", class_name)));
+
+    BaseModelInfo {
+        class_name: base_class_name,
+        fields: base_fields,
+        imports,
+        docstring,
     }
 }
 
@@ -241,7 +348,82 @@ pub fn format_model(model: &ModelInfo) -> String {
         lines.push("    pass  # No columns defined".to_string());
     }
 
+    // Relationships
+    if !model.relationships.is_empty() {
+        lines.push(String::new());
+        lines.push("    # Relationships".to_string());
+        for rel in &model.relationships {
+            lines.push(format_relationship_line(rel));
+        }
+    }
+
     lines.join("\n")
+}
+
+/// Formats a Pydantic base model class definition.
+///
+/// Base models inherit from `BaseModel` instead of `SQLModel` and don't
+/// have `table=True` or `__tablename__`. They're useful for request/response
+/// validation in APIs without DB coupling.
+pub fn format_base_model(base_model: &BaseModelInfo) -> String {
+    let mut lines = Vec::new();
+
+    // Class definition
+    lines.push(format!("class {}(BaseModel):", base_model.class_name));
+
+    // Docstring
+    if let Some(ref doc) = base_model.docstring {
+        lines.push(format!("    \"\"\"{}\"\"\"", escape_python_string(doc)));
+        lines.push(String::new());
+    }
+
+    // Fields
+    if base_model.fields.is_empty() {
+        lines.push("    pass  # No fields for base model".to_string());
+    } else {
+        for field in &base_model.fields {
+            lines.push(format_base_field_line(field));
+        }
+    }
+
+    lines.join("\n")
+}
+
+/// Formats a field line for a Pydantic base model.
+///
+/// This is simpler than SQLModel fields - we remove db-specific parameters
+/// like `primary_key`, `foreign_key`, etc.
+fn format_base_field_line(field: &FieldInfo) -> String {
+    // For base models, we use simpler field definitions without DB-specific params
+    if let Some(ref decl) = field.field_declaration {
+        // Check if the field declaration only has db-specific params
+        // If so, we might want to simplify it
+        if decl.contains("default_factory=")
+            || decl.contains("min_length=")
+            || decl.contains("max_length=")
+        {
+            // Keep validation-related params
+            format!(
+                "    {}: {} = {}",
+                field.attr_name, field.type_annotation, decl
+            )
+        } else if field.type_annotation.contains("| None") {
+            // Nullable field - use simple None default
+            format!("    {}: {} = None", field.attr_name, field.type_annotation)
+        } else {
+            // Required field - no default
+            format!("    {}: {}", field.attr_name, field.type_annotation)
+        }
+    } else if let Some(ref default) = field.simple_default {
+        format!(
+            "    {}: {} = {}",
+            field.attr_name, field.type_annotation, default
+        )
+    } else if field.type_annotation.contains("| None") {
+        format!("    {}: {} = None", field.attr_name, field.type_annotation)
+    } else {
+        format!("    {}: {}", field.attr_name, field.type_annotation)
+    }
 }
 
 #[cfg(test)]
@@ -310,7 +492,7 @@ mod tests {
         let table = make_table_with_pk("users", columns, &["id"]);
         let config = PythonCodegenConfig::default();
 
-        let model = generate_model(&table, &config);
+        let model = generate_model(&table, &config, None);
 
         assert_eq!(model.class_name, "User");
         assert_eq!(model.table_name, "users");
@@ -329,7 +511,7 @@ mod tests {
         let table = make_table_with_pk("users", columns, &["id"]);
         let config = PythonCodegenConfig::default();
 
-        let model = generate_model(&table, &config);
+        let model = generate_model(&table, &config, None);
 
         // Fields should be sorted: PK first, then non-nullable, then nullable
         assert!(model.fields[0].is_primary_key);
@@ -375,7 +557,7 @@ mod tests {
         };
         let config = PythonCodegenConfig::default();
 
-        let model = generate_model(&table, &config);
+        let model = generate_model(&table, &config, None);
 
         assert!(!model.table_args.is_empty());
         assert!(model.table_args[0].contains("UniqueConstraint"));
@@ -416,7 +598,7 @@ mod tests {
         };
         let config = PythonCodegenConfig::default();
 
-        let model = generate_model(&table, &config);
+        let model = generate_model(&table, &config, None);
 
         assert!(!model.table_args.is_empty());
         assert!(model.table_args[0].contains("CheckConstraint"));
@@ -432,7 +614,7 @@ mod tests {
         let table = make_table_with_pk("users", columns, &["id"]);
         let config = PythonCodegenConfig::default();
 
-        let model = generate_model(&table, &config);
+        let model = generate_model(&table, &config, None);
         let output = format_model(&model);
 
         assert!(output.contains("class User(SQLModel, table=True):"));
@@ -454,7 +636,7 @@ mod tests {
             ..Default::default()
         };
 
-        let model = generate_model(&table, &config);
+        let model = generate_model(&table, &config, None);
         let output = format_model(&model);
 
         assert!(output.contains("\"\"\"User accounts table\"\"\""));
@@ -473,7 +655,7 @@ mod tests {
         };
         let config = PythonCodegenConfig::default();
 
-        let model = generate_model(&table, &config);
+        let model = generate_model(&table, &config, None);
 
         assert!(!model.has_columns);
         assert!(!model.warnings.is_empty());

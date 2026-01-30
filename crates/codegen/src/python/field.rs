@@ -8,10 +8,10 @@ use tern_ddl::{Column, ConstraintKind, Table};
 use super::ReservedWordStrategy;
 use super::imports::ImportCollector;
 use super::naming::to_attribute_name;
-use super::type_mapping::{extract_string_length, is_fixed_length_char, map_pg_type};
+use super::type_mapping::{PythonImport, extract_string_length, is_fixed_length_char, map_pg_type};
 
 /// Information about a generated field.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FieldInfo {
     /// The Python attribute name (may differ from column name).
     pub attr_name: String,
@@ -170,6 +170,21 @@ pub fn generate_field(column: &Column, ctx: &FieldContext<'_>) -> FieldInfo {
     let is_unique = ctx.is_unique(column_name);
     let is_indexed = ctx.is_indexed(column_name);
 
+    // Handle generated columns specially (GENERATED ALWAYS AS ... STORED/VIRTUAL)
+    if column.generated.is_some() {
+        return generate_computed_field(
+            column,
+            &attr_name,
+            needs_alias,
+            &py_type,
+            imports,
+            is_primary_key,
+            foreign_key,
+            is_indexed,
+            is_unique,
+        );
+    }
+
     // Determine if we're dealing with an auto-generated primary key (identity or serial)
     let is_auto_pk = is_primary_key
         && (column.identity.is_some() || is_serial_type(&column.type_info.name.as_ref()));
@@ -177,11 +192,31 @@ pub fn generate_field(column: &Column, ctx: &FieldContext<'_>) -> FieldInfo {
     // Build field parameters
     let mut field_params = Vec::new();
 
+    // Check for datetime default factory
+    let type_name = column.type_info.name.as_ref();
+    let has_datetime_default = if is_datetime_type(type_name) {
+        column
+            .default
+            .as_ref()
+            .and_then(|d| is_timestamp_default(d.as_ref()))
+    } else {
+        None
+    };
+
     // Handle nullability and primary key
     let type_annotation = if is_auto_pk {
         // Auto-generated PKs: type is Optional with default=None
         field_params.push("default=None".to_string());
         format!("{} | None", py_type.annotation)
+    } else if let Some(is_timezone_aware) = has_datetime_default {
+        // Datetime columns with now() defaults get a default_factory
+        if is_timezone_aware {
+            field_params.push("default_factory=lambda: datetime.now(timezone.utc)".to_string());
+            imports.add(&PythonImport::datetime("timezone"));
+        } else {
+            field_params.push("default_factory=datetime.now".to_string());
+        }
+        py_type.annotation.clone()
     } else if column.is_nullable {
         format!("{} | None", py_type.annotation)
     } else {
@@ -262,12 +297,158 @@ pub fn generate_field(column: &Column, ctx: &FieldContext<'_>) -> FieldInfo {
     }
 }
 
+/// Generates field info for a computed (generated) column.
+///
+/// Generated columns use `sa_column` with SQLAlchemy's `Computed` to represent
+/// the computation expression. Example output:
+///
+/// ```python
+/// full_name: str | None = Field(
+///     default=None,
+///     sa_column=Column(String, Computed("first_name || ' ' || last_name"))
+/// )
+/// ```
+#[allow(clippy::too_many_arguments)]
+fn generate_computed_field(
+    column: &Column,
+    attr_name: &str,
+    needs_alias: bool,
+    py_type: &super::type_mapping::PythonType,
+    mut imports: ImportCollector,
+    is_primary_key: bool,
+    foreign_key: Option<String>,
+    is_indexed: bool,
+    is_unique: bool,
+) -> FieldInfo {
+    let column_name = column.name.as_ref();
+
+    // Generated columns are always optional since they can't be inserted directly
+    let type_annotation = format!("{} | None", py_type.annotation);
+
+    // Get the generation expression
+    let expr = column
+        .generated
+        .as_ref()
+        .map(|g| g.expression.as_ref())
+        .unwrap_or("");
+
+    // Escape the expression for Python string
+    let escaped_expr = escape_python_string(expr);
+
+    // Determine the SQLAlchemy type for the column
+    let sa_type = get_sqlalchemy_type_for_computed(&column.type_info.name.as_ref());
+
+    // Build sa_column parameter
+    let sa_column = format!("Column({}, Computed(\"{}\"))", sa_type, escaped_expr);
+
+    // Add required imports for computed columns
+    imports.add(&PythonImport::sqlalchemy("Column"));
+    imports.add(&PythonImport::sqlalchemy("Computed"));
+    imports.add(&PythonImport::sqlalchemy(sa_type));
+    imports.add_field();
+
+    // Build field parameters
+    let mut field_params = vec![
+        "default=None".to_string(),
+        format!("sa_column={}", sa_column),
+    ];
+
+    // Add alias if needed
+    if needs_alias {
+        field_params.push(format!("alias=\"{}\"", column_name));
+    }
+
+    let field_declaration = Some(format!("Field({})", field_params.join(", ")));
+
+    FieldInfo {
+        attr_name: attr_name.to_string(),
+        db_column_name: column_name.to_string(),
+        needs_alias,
+        type_annotation,
+        field_declaration,
+        simple_default: None,
+        imports,
+        is_primary_key,
+        foreign_key,
+        is_indexed,
+        is_unique,
+    }
+}
+
+/// Escapes a string for use in a Python string literal.
+fn escape_python_string(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+}
+
+/// Returns the SQLAlchemy type name for a PostgreSQL type (used in Computed columns).
+fn get_sqlalchemy_type_for_computed(type_name: &str) -> &'static str {
+    match type_name {
+        "int2" | "smallint" => "SmallInteger",
+        "int4" | "integer" | "int" => "Integer",
+        "int8" | "bigint" => "BigInteger",
+        "float4" | "real" => "Float",
+        "float8" | "double precision" => "Float",
+        "numeric" | "decimal" => "Numeric",
+        "bool" | "boolean" => "Boolean",
+        "text" => "Text",
+        "varchar" | "character varying" => "String",
+        "char" | "character" | "bpchar" => "String",
+        "date" => "Date",
+        "time" | "time without time zone" => "Time",
+        "timestamp" | "timestamp without time zone" => "DateTime",
+        "timestamptz" | "timestamp with time zone" => "DateTime",
+        "uuid" => "UUID",
+        "json" | "jsonb" => "JSON",
+        "bytea" => "LargeBinary",
+        _ => "String", // Default fallback
+    }
+}
+
 /// Checks if a type name represents a serial (auto-increment) type.
 fn is_serial_type(type_name: &str) -> bool {
     matches!(
         type_name,
         "serial" | "serial2" | "serial4" | "serial8" | "smallserial" | "bigserial"
     )
+}
+
+/// Checks if a type name represents a datetime type.
+fn is_datetime_type(type_name: &str) -> bool {
+    matches!(
+        type_name,
+        "timestamp" | "timestamptz" | "timestamp with time zone" | "timestamp without time zone"
+    )
+}
+
+/// Checks if a default expression represents a current timestamp function.
+///
+/// Returns `Some(is_timezone_aware)` if the default is a timestamp function:
+/// - `Some(true)` for timezone-aware defaults like `now()`, `current_timestamp`, `transaction_timestamp()`
+/// - `Some(false)` for naive defaults like `localtimestamp`
+/// - `None` if the default is not a timestamp function
+fn is_timestamp_default(default_expr: &str) -> Option<bool> {
+    let normalized = default_expr.trim().to_lowercase();
+
+    // Check for timezone-aware timestamp functions
+    if normalized.starts_with("now()")
+        || normalized.starts_with("current_timestamp")
+        || normalized.starts_with("transaction_timestamp()")
+        || normalized.starts_with("statement_timestamp()")
+        || normalized.starts_with("clock_timestamp()")
+    {
+        return Some(true);
+    }
+
+    // Check for naive timestamp functions
+    if normalized.starts_with("localtimestamp") {
+        return Some(false);
+    }
+
+    None
 }
 
 /// Formats a field as a Python class attribute line.
@@ -511,5 +692,202 @@ mod tests {
             line,
             "    id: int | None = Field(default=None, primary_key=True)"
         );
+    }
+
+    #[test]
+    fn test_datetime_with_now_default() {
+        let mut column = make_column("created_at", "timestamptz", false);
+        column.default = Some(tern_ddl::types::SqlExpr::new("now()".to_string()));
+
+        let table = make_table("events", vec![column.clone()], vec![]);
+        let strategy = ReservedWordStrategy::AppendUnderscore;
+        let ctx = FieldContext::from_table(&table, &strategy);
+
+        let field = generate_field(&column, &ctx);
+
+        assert_eq!(field.type_annotation, "datetime");
+        assert!(field.field_declaration.is_some());
+        let decl = field.field_declaration.unwrap();
+        assert!(
+            decl.contains("default_factory=lambda: datetime.now(timezone.utc)"),
+            "Expected default_factory, got: {}",
+            decl
+        );
+    }
+
+    #[test]
+    fn test_datetime_with_current_timestamp_default() {
+        let mut column = make_column("updated_at", "timestamp", false);
+        column.default = Some(tern_ddl::types::SqlExpr::new(
+            "CURRENT_TIMESTAMP".to_string(),
+        ));
+
+        let table = make_table("events", vec![column.clone()], vec![]);
+        let strategy = ReservedWordStrategy::AppendUnderscore;
+        let ctx = FieldContext::from_table(&table, &strategy);
+
+        let field = generate_field(&column, &ctx);
+
+        assert!(field.field_declaration.is_some());
+        let decl = field.field_declaration.unwrap();
+        assert!(
+            decl.contains("default_factory=lambda: datetime.now(timezone.utc)"),
+            "Expected default_factory for CURRENT_TIMESTAMP, got: {}",
+            decl
+        );
+    }
+
+    #[test]
+    fn test_datetime_with_localtimestamp_default() {
+        let mut column = make_column("created_at", "timestamp", false);
+        column.default = Some(tern_ddl::types::SqlExpr::new("localtimestamp".to_string()));
+
+        let table = make_table("events", vec![column.clone()], vec![]);
+        let strategy = ReservedWordStrategy::AppendUnderscore;
+        let ctx = FieldContext::from_table(&table, &strategy);
+
+        let field = generate_field(&column, &ctx);
+
+        assert!(field.field_declaration.is_some());
+        let decl = field.field_declaration.unwrap();
+        // For localtimestamp, use naive datetime.now without timezone
+        assert!(
+            decl.contains("default_factory=datetime.now"),
+            "Expected default_factory=datetime.now for localtimestamp, got: {}",
+            decl
+        );
+        // Should not include timezone.utc
+        assert!(
+            !decl.contains("timezone.utc"),
+            "localtimestamp should not include timezone.utc"
+        );
+    }
+
+    #[test]
+    fn test_datetime_without_default_no_factory() {
+        // Column without default should not get default_factory
+        let column = make_column("created_at", "timestamptz", false);
+
+        let table = make_table("events", vec![column.clone()], vec![]);
+        let strategy = ReservedWordStrategy::AppendUnderscore;
+        let ctx = FieldContext::from_table(&table, &strategy);
+
+        let field = generate_field(&column, &ctx);
+
+        // No field declaration needed for non-nullable field without default
+        assert!(
+            field.field_declaration.is_none(),
+            "Field without default should not have field_declaration"
+        );
+    }
+
+    #[test]
+    fn test_is_timestamp_default() {
+        // Timezone-aware defaults
+        assert_eq!(is_timestamp_default("now()"), Some(true));
+        assert_eq!(is_timestamp_default("NOW()"), Some(true));
+        assert_eq!(is_timestamp_default("current_timestamp"), Some(true));
+        assert_eq!(is_timestamp_default("CURRENT_TIMESTAMP"), Some(true));
+        assert_eq!(is_timestamp_default("transaction_timestamp()"), Some(true));
+        assert_eq!(is_timestamp_default("statement_timestamp()"), Some(true));
+        assert_eq!(is_timestamp_default("clock_timestamp()"), Some(true));
+
+        // Naive timestamp defaults
+        assert_eq!(is_timestamp_default("localtimestamp"), Some(false));
+        assert_eq!(is_timestamp_default("LOCALTIMESTAMP"), Some(false));
+
+        // Not timestamp defaults
+        assert_eq!(is_timestamp_default("'2024-01-01'::timestamp"), None);
+        assert_eq!(is_timestamp_default("NULL"), None);
+        assert_eq!(is_timestamp_default("0"), None);
+    }
+
+    #[test]
+    fn test_generated_column() {
+        use tern_ddl::types::SqlExpr;
+        use tern_ddl::{GeneratedColumn, GeneratedStorage};
+
+        let mut column = make_column("full_name", "text", false);
+        column.generated = Some(GeneratedColumn {
+            expression: SqlExpr::new("first_name || ' ' || last_name".to_string()),
+            storage: GeneratedStorage::Stored,
+        });
+
+        let table = make_table("persons", vec![column.clone()], vec![]);
+        let strategy = ReservedWordStrategy::AppendUnderscore;
+        let ctx = FieldContext::from_table(&table, &strategy);
+
+        let field = generate_field(&column, &ctx);
+
+        // Generated columns should be nullable with None default
+        assert_eq!(field.type_annotation, "str | None");
+        assert!(field.field_declaration.is_some());
+
+        let decl = field.field_declaration.unwrap();
+        assert!(
+            decl.contains("default=None"),
+            "Generated column should have default=None, got: {}",
+            decl
+        );
+        assert!(
+            decl.contains("sa_column=Column("),
+            "Generated column should use sa_column, got: {}",
+            decl
+        );
+        assert!(
+            decl.contains("Computed("),
+            "Generated column should use Computed, got: {}",
+            decl
+        );
+        assert!(
+            decl.contains("first_name"),
+            "Expression should contain 'first_name', got: {}",
+            decl
+        );
+    }
+
+    #[test]
+    fn test_generated_column_numeric() {
+        use tern_ddl::types::SqlExpr;
+        use tern_ddl::{GeneratedColumn, GeneratedStorage};
+
+        let mut column = make_column("total", "numeric", false);
+        column.generated = Some(GeneratedColumn {
+            expression: SqlExpr::new("price * quantity".to_string()),
+            storage: GeneratedStorage::Stored,
+        });
+
+        let table = make_table("order_items", vec![column.clone()], vec![]);
+        let strategy = ReservedWordStrategy::AppendUnderscore;
+        let ctx = FieldContext::from_table(&table, &strategy);
+
+        let field = generate_field(&column, &ctx);
+
+        assert_eq!(field.type_annotation, "Decimal | None");
+        let decl = field.field_declaration.unwrap();
+        assert!(
+            decl.contains("Numeric"),
+            "Numeric generated column should use Numeric SA type, got: {}",
+            decl
+        );
+    }
+
+    #[test]
+    fn test_escape_python_string() {
+        assert_eq!(escape_python_string("hello"), "hello");
+        assert_eq!(escape_python_string("say \"hi\""), "say \\\"hi\\\"");
+        assert_eq!(escape_python_string("line1\nline2"), "line1\\nline2");
+        assert_eq!(escape_python_string("path\\to\\file"), "path\\\\to\\\\file");
+    }
+
+    #[test]
+    fn test_get_sqlalchemy_type_for_computed() {
+        assert_eq!(get_sqlalchemy_type_for_computed("int4"), "Integer");
+        assert_eq!(get_sqlalchemy_type_for_computed("text"), "Text");
+        assert_eq!(get_sqlalchemy_type_for_computed("numeric"), "Numeric");
+        assert_eq!(get_sqlalchemy_type_for_computed("bool"), "Boolean");
+        assert_eq!(get_sqlalchemy_type_for_computed("timestamp"), "DateTime");
+        assert_eq!(get_sqlalchemy_type_for_computed("uuid"), "UUID");
+        assert_eq!(get_sqlalchemy_type_for_computed("unknown_type"), "String");
     }
 }
