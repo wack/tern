@@ -193,7 +193,7 @@ We welcome GitHub issues and pull requests.
 
 Before implementing a new feature or significant change, please open an issue to discuss it with a maintainer. This helps ensure your contribution aligns with the project's direction and avoids duplicate effort.
 
-See [CONTRIBUTORS.md](CONTRIBUTORS.md) for development setup and guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Supported Schema Objects
 
