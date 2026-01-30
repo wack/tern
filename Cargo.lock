@@ -3184,7 +3184,10 @@ name = "tern-codegen"
 version = "0.1.0"
 dependencies = [
  "genco",
+ "insta",
+ "pretty_assertions",
  "tern-ddl",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

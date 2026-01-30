@@ -1,0 +1,15 @@
+---
+source: crates/codegen/src/python/tests/snapshot_tests.rs
+assertion_line: 510
+expression: "output.get(\"post.py\").unwrap()"
+---
+"""SQLModel definition for Post."""
+
+from sqlmodel import Field, SQLModel
+
+class Post(SQLModel, table=True):
+    __tablename__ = "posts"
+
+    id: int | None = Field(default=None, primary_key=True)
+    title: str
+    user_id: int = Field(foreign_key="public.users.id")
