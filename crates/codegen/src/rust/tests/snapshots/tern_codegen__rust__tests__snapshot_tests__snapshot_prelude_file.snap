@@ -1,0 +1,10 @@
+---
+source: crates/codegen/src/rust/tests/snapshot_tests.rs
+expression: "output.get(\"prelude.rs\").unwrap()"
+---
+//! Re-exports commonly used entity types.
+//!
+//! This file was automatically generated. Do not edit manually.
+
+pub use super::user::Entity as User;
+pub use super::post::Entity as Post;
