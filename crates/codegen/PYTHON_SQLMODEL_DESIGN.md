@@ -1,21 +1,30 @@
 # Python SQLModel Code Generator Design
 
+## Implementation Status
+
+> **Status Legend**:
+> - [x] Completed
+> - [ ] Future work (not yet implemented)
+> - [~] Partially implemented
+
 ## Overview
 
 This document outlines the design for implementing a Python code generator that converts PostgreSQL DDL schema definitions (`Vec<Table>`) into SQLModel and Pydantic models. The generator will implement the `Codegen` trait and use the `genco` crate for Python code generation.
 
 ## Goals
 
-1. Generate idiomatic SQLModel models from PostgreSQL table definitions
-2. Properly handle all PostgreSQL types with appropriate Python type mappings
-3. Support primary keys, foreign keys, unique constraints, and indexes
-4. Generate both table models (with `table=True`) and optional Pydantic-only models for validation
-5. Produce well-formatted, readable Python code with correct imports
-6. Handle edge cases robustly (reserved words, special characters, etc.)
+1. [x] Generate idiomatic SQLModel models from PostgreSQL table definitions
+2. [x] Properly handle all PostgreSQL types with appropriate Python type mappings
+3. [x] Support primary keys, foreign keys, unique constraints, and indexes
+4. [ ] Generate both table models (with `table=True`) and optional Pydantic-only models for validation
+5. [x] Produce well-formatted, readable Python code with correct imports
+6. [x] Handle edge cases robustly (reserved words, special characters, etc.)
 
 ## Architecture
 
 ### Module Structure
+
+[x] **Completed** - All modules implemented as designed.
 
 ```
 crates/codegen/src/python/
@@ -29,10 +38,13 @@ crates/codegen/src/python/
 └── tests/              # Test submodule
     ├── mod.rs          # Test utilities and common fixtures
     ├── unit_tests.rs   # Unit tests for individual components
+    ├── snapshot_tests.rs # Snapshot tests for full generation output
     └── snapshots/      # Snapshot test files (managed by insta)
 ```
 
 ### Core Types
+
+[x] **Completed** - All core types implemented in `mod.rs`.
 
 ```rust
 /// Configuration for Python code generation.
@@ -40,19 +52,22 @@ crates/codegen/src/python/
 pub struct PythonCodegenConfig {
     /// Whether to generate Pydantic-only base classes for each model.
     /// These are useful for request/response validation without DB coupling.
-    pub generate_base_models: bool,
+    pub generate_base_models: bool,  // [ ] Future work
 
     /// Module name prefix for generated imports (e.g., "app.models").
-    pub module_prefix: Option<String>,
+    pub module_prefix: Option<String>,  // [ ] Future work
 
     /// Whether to include docstrings from table/column comments.
-    pub include_docstrings: bool,
+    pub include_docstrings: bool,  // [x] Completed
 
     /// How to handle Python reserved words in identifiers.
-    pub reserved_word_strategy: ReservedWordStrategy,
+    pub reserved_word_strategy: ReservedWordStrategy,  // [x] Completed
 
     /// Whether to generate relationship attributes for foreign keys.
-    pub generate_relationships: bool,
+    pub generate_relationships: bool,  // [ ] Future work
+
+    /// Output mode (single file or multi-file).
+    pub output_mode: OutputMode,  // [x] Completed
 }
 
 #[derive(Debug, Clone, Default)]
@@ -78,38 +93,42 @@ impl Codegen for PythonCodegen {
 
 ### PostgreSQL to Python Type Mapping
 
-| PostgreSQL Type | Python Type | SQLModel Field | Notes |
-|-----------------|-------------|----------------|-------|
-| `integer`, `int4` | `int` | `Field()` | |
-| `bigint`, `int8` | `int` | `Field()` | Python int handles arbitrary precision |
-| `smallint`, `int2` | `int` | `Field()` | |
-| `serial`, `serial4` | `int` | `Field(default=None, primary_key=True)` | Auto-increment |
-| `bigserial`, `serial8` | `int` | `Field(default=None, primary_key=True)` | |
-| `boolean`, `bool` | `bool` | `Field()` | |
-| `text` | `str` | `Field()` | |
-| `varchar(n)`, `character varying` | `str` | `Field(max_length=n)` | Validate length |
-| `char(n)`, `character` | `str` | `Field(min_length=n, max_length=n)` | Fixed length |
-| `numeric`, `decimal` | `Decimal` | `Field()` | `from decimal import Decimal` |
-| `real`, `float4` | `float` | `Field()` | |
-| `double precision`, `float8` | `float` | `Field()` | |
-| `date` | `date` | `Field()` | `from datetime import date` |
-| `time`, `time without time zone` | `time` | `Field()` | `from datetime import time` |
-| `timetz`, `time with time zone` | `time` | `Field()` | |
-| `timestamp`, `timestamp without time zone` | `datetime` | `Field()` | `from datetime import datetime` |
-| `timestamptz`, `timestamp with time zone` | `datetime` | `Field()` | |
-| `interval` | `timedelta` | `Field()` | `from datetime import timedelta` |
-| `uuid` | `UUID` | `Field()` | `from uuid import UUID` |
-| `json` | `Any` | `Field(sa_type=JSON)` | `from typing import Any` |
-| `jsonb` | `Any` | `Field(sa_type=JSON)` | |
-| `bytea` | `bytes` | `Field()` | |
-| `inet` | `str` | `Field()` | IP address as string |
-| `cidr` | `str` | `Field()` | |
-| `macaddr` | `str` | `Field()` | |
-| `point`, `line`, etc. | `str` | `Field()` | Geometric as string |
-| `array` (e.g., `integer[]`) | `list[int]` | `Field(sa_type=ARRAY(Integer))` | |
-| User-defined enum | Literal union or Python Enum | `Field()` | See enum handling |
+[x] **Completed** - All types in this table are implemented in `type_mapping.rs`.
+
+| PostgreSQL Type | Python Type | SQLModel Field | Status |
+|-----------------|-------------|----------------|--------|
+| `integer`, `int4` | `int` | `Field()` | [x] |
+| `bigint`, `int8` | `int` | `Field()` | [x] |
+| `smallint`, `int2` | `int` | `Field()` | [x] |
+| `serial`, `serial4` | `int` | `Field(default=None, primary_key=True)` | [x] |
+| `bigserial`, `serial8` | `int` | `Field(default=None, primary_key=True)` | [x] |
+| `boolean`, `bool` | `bool` | `Field()` | [x] |
+| `text` | `str` | `Field()` | [x] |
+| `varchar(n)`, `character varying` | `str` | `Field(max_length=n)` | [x] (length extracted but not yet used in Field) |
+| `char(n)`, `character` | `str` | `Field(min_length=n, max_length=n)` | [x] (length extracted but not yet used in Field) |
+| `numeric`, `decimal` | `Decimal` | `Field()` | [x] |
+| `real`, `float4` | `float` | `Field()` | [x] |
+| `double precision`, `float8` | `float` | `Field()` | [x] |
+| `date` | `date` | `Field()` | [x] |
+| `time`, `time without time zone` | `time` | `Field()` | [x] |
+| `timetz`, `time with time zone` | `time` | `Field()` | [x] |
+| `timestamp`, `timestamp without time zone` | `datetime` | `Field()` | [x] |
+| `timestamptz`, `timestamp with time zone` | `datetime` | `Field()` | [x] |
+| `interval` | `timedelta` | `Field()` | [x] |
+| `uuid` | `UUID` | `Field()` | [x] |
+| `json` | `dict[str, Any]` | `Field(sa_type=JSON)` | [x] |
+| `jsonb` | `dict[str, Any]` | `Field(sa_type=JSON)` | [x] |
+| `bytea` | `bytes` | `Field()` | [x] |
+| `inet` | `str` | `Field()` | [x] |
+| `cidr` | `str` | `Field()` | [x] |
+| `macaddr` | `str` | `Field()` | [x] |
+| `point`, `line`, etc. | `str` | `Field()` | [x] |
+| `array` (e.g., `integer[]`) | `list[int]` | `Field(sa_type=ARRAY(Integer))` | [x] |
+| User-defined enum | Literal union or Python Enum | `Field()` | [ ] Future work |
 
 ### Handling User-Defined Types
+
+[ ] **Future Work** - User-defined enum types are not yet supported.
 
 For user-defined enum types:
 ```python
@@ -133,6 +152,8 @@ class UserStatus(str, Enum):
 
 ### Basic Field Patterns
 
+[x] **Completed** - All basic field patterns implemented in `field.rs`.
+
 ```python
 # Non-nullable without default
 name: str
@@ -146,7 +167,7 @@ status: str = Field(default="active")
 # Primary key (nullable with None default for auto-generation)
 id: int | None = Field(default=None, primary_key=True)
 
-# With index
+# With index  [ ] Future work - index=True not yet generated for single columns
 email: str = Field(index=True)
 
 # With unique constraint
@@ -158,12 +179,15 @@ user_id: int | None = Field(default=None, foreign_key="users.id")
 
 ### Generated/Identity Columns
 
+[x] **Completed** - Identity columns handled correctly.
+[~] **Partial** - Generated columns emit warnings but don't fully support `Computed`.
+
 ```python
 # Identity column (GENERATED ALWAYS AS IDENTITY)
 id: int | None = Field(default=None, primary_key=True)
 # Note: SQLModel handles auto-increment through primary_key=True with None default
 
-# Generated column (STORED)
+# Generated column (STORED) - [ ] Future work for full Computed support
 # SQLModel doesn't have native support; use sa_column
 full_name: str = Field(
     default=None,
@@ -174,6 +198,8 @@ full_name: str = Field(
 ### Constraint Handling
 
 #### Primary Key
+
+[x] **Completed**
 
 ```python
 # Single column
@@ -188,16 +214,21 @@ class OrderItem(SQLModel, table=True):
 
 #### Foreign Key
 
+[x] **Completed** - Basic FK support.
+[ ] **Future Work** - Relationship generation.
+
 ```python
 # Basic FK
 user_id: int | None = Field(default=None, foreign_key="users.id")
 
-# With relationship
+# With relationship - [ ] Future work
 user_id: int | None = Field(default=None, foreign_key="users.id")
 user: "User | None" = Relationship(back_populates="posts")
 ```
 
 #### Unique Constraint
+
+[x] **Completed**
 
 ```python
 # Single column
@@ -211,6 +242,8 @@ __table_args__ = (
 
 #### Check Constraint
 
+[x] **Completed**
+
 ```python
 # Via __table_args__
 __table_args__ = (
@@ -220,11 +253,13 @@ __table_args__ = (
 
 ### Index Handling
 
+[~] **Partial** - Multi-column indexes via `__table_args__` completed. Single-column `Field(index=True)` not yet implemented.
+
 ```python
-# Simple column index
+# Simple column index - [ ] Future work
 email: str = Field(index=True)
 
-# Composite or complex indexes - via __table_args__
+# Composite or complex indexes - via __table_args__ [x] Completed
 __table_args__ = (
     Index("idx_users_name_email", "name", "email"),
 )
@@ -234,6 +269,8 @@ __table_args__ = (
 
 ### Single File Output
 
+[x] **Completed**
+
 For simpler schemas, generate a single `models.py`:
 
 ```
@@ -242,18 +279,21 @@ models.py
 
 ### Multi-File Output
 
+[x] **Completed**
+
 For larger schemas, split by table with a shared types module:
 
 ```
 models/
 ├── __init__.py       # Re-exports all models
-├── _types.py         # Shared types, enums, base classes
 ├── user.py           # User model
 ├── post.py           # Post model
 └── comment.py        # Comment model
 ```
 
-**Configuration**: Let users choose via `OutputMode::SingleFile` or `OutputMode::MultiFile`.
+**Note**: `_types.py` for shared types/enums not yet implemented (depends on enum support).
+
+**Configuration**: Users can choose via `OutputMode::SingleFile` or `OutputMode::MultiFile`.
 
 ## Generated Code Examples
 
@@ -280,16 +320,14 @@ Table {
 
 ### Generated Python
 
+[x] **Completed** - Basic generation works. Some features marked for future work.
+
 ```python
 """SQLModel definitions generated by Tern."""
 
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 from sqlmodel import Field, SQLModel
-
-if TYPE_CHECKING:
-    from .post import Post  # For relationship type hints
 
 
 class User(SQLModel, table=True):
@@ -300,15 +338,17 @@ class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     email: str = Field(unique=True)
     name: str | None = None
-    created_at: datetime = Field(default_factory=datetime.now, index=True)
+    created_at: datetime  # Note: default_factory not yet implemented
 
-    # Relationships (if generate_relationships=True)
+    # Relationships (if generate_relationships=True) - [ ] Future work
     # posts: list["Post"] = Relationship(back_populates="user")
 ```
 
 ## Edge Cases
 
 ### 1. Python Reserved Words
+
+[x] **Completed** - Full reserved word handling in `naming.rs`.
 
 Python reserved words that might appear as column/table names:
 
@@ -318,31 +358,25 @@ def, del, elif, else, except, finally, for, from, global, if, import, in,
 is, lambda, nonlocal, not, or, pass, raise, return, try, while, with, yield
 ```
 
+Also handles soft keywords (`match`, `case`, `type`, `_`) and can optionally handle Python builtins.
+
 **Handling**:
 ```python
 # Column named "class"
 class_: str = Field(alias="class")
 ```
 
-Use SQLAlchemy column aliasing to preserve the database column name while using a valid Python identifier.
-
 ### 2. Invalid Python Identifiers
 
-- Names starting with numbers: `1column` -> `column_1` or `_1column`
+[x] **Completed**
+
+- Names starting with numbers: `1column` -> `_1column`
 - Names with special characters: `column-name` -> `column_name`
 - Names with spaces: `column name` -> `column_name`
 
-```rust
-fn sanitize_identifier(name: &str) -> String {
-    // 1. Replace invalid characters with underscores
-    // 2. Ensure doesn't start with digit
-    // 3. Handle reserved words
-}
-```
-
 ### 3. Circular Foreign Key References
 
-Tables may reference each other:
+[~] **Partial** - FK references work. Full relationship generation with back_populates is future work.
 
 ```python
 # Forward reference using string annotation
@@ -350,7 +384,7 @@ class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     manager_id: int | None = Field(default=None, foreign_key="users.id")
 
-    # Self-referential relationship
+    # Self-referential relationship - [ ] Future work
     manager: "User | None" = Relationship(
         back_populates="direct_reports",
         sa_relationship_kwargs={"remote_side": "User.id"}
@@ -360,7 +394,9 @@ class User(SQLModel, table=True):
 
 ### 4. Schema-Qualified Names
 
-Foreign keys might reference tables in other schemas:
+[x] **Completed**
+
+Foreign keys reference tables with schema qualification:
 
 ```python
 # Reference to other_schema.other_table
@@ -369,28 +405,31 @@ other_id: int | None = Field(default=None, foreign_key="other_schema.other_table
 
 ### 5. Array Types
 
+[x] **Completed**
+
 ```python
-from sqlalchemy import ARRAY, Integer
+from sqlalchemy import ARRAY, Text
 from sqlmodel import Field, SQLModel
 
 class Document(SQLModel, table=True):
-    tags: list[str] = Field(
-        default_factory=list,
-        sa_type=ARRAY(String)
-    )
+    tags: list[str] = Field(sa_type=ARRAY(Text))
 ```
 
 ### 6. JSONB Fields
+
+[x] **Completed**
 
 ```python
 from sqlalchemy import JSON
 from typing import Any
 
 class Settings(SQLModel, table=True):
-    config: dict[str, Any] = Field(default_factory=dict, sa_type=JSON)
+    config: dict[str, Any] = Field(sa_type=JSON)
 ```
 
 ### 7. Composite Primary Keys
+
+[x] **Completed**
 
 ```python
 class OrderItem(SQLModel, table=True):
@@ -402,6 +441,8 @@ class OrderItem(SQLModel, table=True):
 ```
 
 ### 8. Generated Columns
+
+[ ] **Future Work** - Currently emits warning. Full `Computed` support not implemented.
 
 SQLModel doesn't have first-class support for generated columns, but we can use `sa_column`:
 
@@ -419,6 +460,8 @@ class Person(SQLModel, table=True):
 
 ### 9. Exclusion Constraints
 
+[x] **Completed** - Emits warning comment as designed.
+
 Not directly supported by SQLModel; emit a warning comment:
 
 ```python
@@ -428,80 +471,93 @@ Not directly supported by SQLModel; emit a warning comment:
 
 ### 10. Empty Tables
 
-Tables with no columns (rare but possible):
+[x] **Completed** - Emits warning.
 
-```python
-class EmptyTable(SQLModel, table=True):
-    """Table with no columns (placeholder)."""
-    __tablename__ = "empty_table"
-    pass  # SQLModel requires at least one field in practice
-```
-
-**Emit warning**: Tables with no columns should emit a warning as SQLModel requires at least one field.
+Tables with no columns emit a warning as SQLModel requires at least one field.
 
 ## Implementation Plan
 
 ### Phase 1: Core Infrastructure
 
-1. Add `genco` dependency to `tern-codegen/Cargo.toml`
-2. Create module structure under `src/python/`
-3. Implement `PythonCodegenConfig` and `PythonCodegen` struct
-4. Implement basic `Codegen` trait with empty generation
+[x] **Completed**
+
+1. [x] Add `genco` dependency to `tern-codegen/Cargo.toml`
+2. [x] Create module structure under `src/python/`
+3. [x] Implement `PythonCodegenConfig` and `PythonCodegen` struct
+4. [x] Implement basic `Codegen` trait with empty generation
 
 ### Phase 2: Type Mapping
 
-1. Implement `type_mapping.rs` with PostgreSQL -> Python conversions
-2. Handle all scalar types from the mapping table
-3. Add array type detection and handling
-4. Add tests for type mapping edge cases
+[x] **Completed**
+
+1. [x] Implement `type_mapping.rs` with PostgreSQL -> Python conversions
+2. [x] Handle all scalar types from the mapping table
+3. [x] Add array type detection and handling
+4. [x] Add tests for type mapping edge cases
 
 ### Phase 3: Name Handling
 
-1. Implement `naming.rs` with identifier sanitization
-2. Build reserved word detection and handling
-3. Implement table/column name conversion to Python conventions
-4. Add tests for naming edge cases
+[x] **Completed**
+
+1. [x] Implement `naming.rs` with identifier sanitization
+2. [x] Build reserved word detection and handling
+3. [x] Implement table/column name conversion to Python conventions
+4. [x] Add tests for naming edge cases
 
 ### Phase 4: Basic Model Generation
 
-1. Implement simple class generation with genco
-2. Generate basic fields (non-nullable, no constraints)
-3. Handle nullable fields with `Optional` types
-4. Generate proper imports
+[x] **Completed**
+
+1. [x] Implement simple class generation with genco
+2. [x] Generate basic fields (non-nullable, no constraints)
+3. [x] Handle nullable fields with `| None` types
+4. [x] Generate proper imports
 
 ### Phase 5: Constraint Support
 
-1. Primary key generation
-2. Foreign key generation (without relationships)
-3. Unique constraint generation (single-column via Field, multi-column via `__table_args__`)
-4. Check constraint generation via `__table_args__`
-5. Index generation
+[x] **Completed**
+
+1. [x] Primary key generation
+2. [x] Foreign key generation (without relationships)
+3. [x] Unique constraint generation (single-column via Field, multi-column via `__table_args__`)
+4. [x] Check constraint generation via `__table_args__`
+5. [x] Index generation (multi-column via `__table_args__`)
 
 ### Phase 6: Relationship Generation
 
-1. Analyze foreign key graph to determine relationship directions
-2. Generate `Relationship()` attributes
-3. Handle self-referential relationships
-4. Handle circular references with forward declarations
+[ ] **Future Work**
+
+1. [ ] Analyze foreign key graph to determine relationship directions
+2. [ ] Generate `Relationship()` attributes
+3. [ ] Handle self-referential relationships
+4. [ ] Handle circular references with forward declarations
+
+**Note**: Infrastructure is in place (`add_relationship`, `add_type_checking` methods exist with `#[allow(dead_code)]`).
 
 ### Phase 7: Advanced Features
 
-1. Generated column support
-2. Identity column support
-3. Array type support
-4. JSONB field support
-5. Docstring generation from comments
+[~] **Partially Completed**
+
+1. [ ] Generated column support (with `Computed`)
+2. [x] Identity column support
+3. [x] Array type support
+4. [x] JSONB field support
+5. [x] Docstring generation from comments
 
 ### Phase 8: Testing
 
-1. Unit tests for each component
-2. Snapshot tests for complete model generation
-3. Edge case tests (reserved words, special characters, circular refs)
-4. Integration tests with complex multi-table schemas
+[x] **Completed**
+
+1. [x] Unit tests for each component (109 tests)
+2. [x] Snapshot tests for complete model generation (11 snapshots)
+3. [x] Edge case tests (reserved words, special characters, circular refs)
+4. [x] Integration tests with complex multi-table schemas
 
 ## Dependencies
 
-Add to `crates/codegen/Cargo.toml`:
+[x] **Completed**
+
+Added to `crates/codegen/Cargo.toml`:
 
 ```toml
 [dependencies]
@@ -518,7 +574,7 @@ pretty_assertions = "1.4"
 
 ### Unit Tests
 
-Test individual components in isolation:
+[x] **Completed** - 109 tests covering all components.
 
 ```rust
 #[test]
@@ -534,7 +590,7 @@ fn test_sanitize_reserved_word() {
 
 ### Snapshot Tests
 
-Use `insta` for snapshot testing of generated code:
+[x] **Completed** - 11 snapshot tests with insta.
 
 ```rust
 #[test]
@@ -545,61 +601,24 @@ fn snapshot_simple_table() {
 
     insta::assert_snapshot!(output.get("models.py").unwrap());
 }
-
-#[test]
-fn snapshot_foreign_key_relationship() {
-    let tables = vec![create_users_table(), create_posts_table()];
-    let codegen = PythonCodegen::new(PythonCodegenConfig {
-        generate_relationships: true,
-        ..Default::default()
-    });
-    let output = codegen.generate(tables);
-
-    insta::assert_snapshot!(output.get("models.py").unwrap());
-}
 ```
 
 ### Edge Case Tests
 
-```rust
-#[test]
-fn test_reserved_word_column() {
-    let table = Table {
-        name: TableName::try_new("items".to_string()).unwrap(),
-        columns: vec![
-            column("class", "text"),  // Reserved word
-            column("from", "integer"), // Reserved word
-        ],
-        ..Default::default()
-    };
-    // Verify generated code uses aliases
-}
+[x] **Completed**
 
-#[test]
-fn test_self_referential_foreign_key() {
-    let table = Table {
-        name: TableName::try_new("employees".to_string()).unwrap(),
-        columns: vec![
-            column("id", "integer"),
-            column("manager_id", "integer"),
-        ],
-        constraints: vec![
-            Constraint::foreign_key("manager_id", "employees", "id"),
-        ],
-        ..Default::default()
-    };
-    // Verify self-referential handling
-}
-
-#[test]
-fn test_circular_foreign_keys() {
-    let user_table = /* ... references posts.featured_user_id */;
-    let post_table = /* ... references users.id */;
-    // Verify circular reference handling with forward declarations
-}
-```
+- Reserved word columns (class, from, import, def, etc.)
+- Self-referential foreign keys
+- Composite primary keys
+- Multi-column unique constraints
+- Check constraints
+- Exclusion constraints (warning)
+- All PostgreSQL types
+- Multi-file output mode
 
 ## Error Handling
+
+[x] **Completed** - Error type defined in `mod.rs`.
 
 ```rust
 #[derive(Debug, thiserror::Error)]
@@ -620,24 +639,31 @@ pub enum PythonCodegenError {
 
 **Note**: The current `Codegen` trait returns `HashMap<String, String>` without error handling. Consider proposing a trait update to return `Result<HashMap<String, String>, Error>` in the future.
 
-## Open Questions
+## Open Questions (Resolved)
 
 1. **Output Mode**: Should we default to single-file or multi-file output?
-   - **Recommendation**: Single file for simplicity, with config option for multi-file.
+   - **Resolution**: [x] Single file is the default, with `OutputMode::MultiFile` option.
 
 2. **Relationship Generation**: Should relationships be opt-in or opt-out?
-   - **Recommendation**: Opt-in via config flag, as relationships add complexity.
+   - **Resolution**: [x] Opt-in via `generate_relationships` config flag. Not yet implemented.
 
 3. **Type Hints Style**: Should we use `Optional[X]` or `X | None`?
-   - **Recommendation**: `X | None` (Python 3.10+ syntax) as it's more modern and SQLModel targets newer Python.
+   - **Resolution**: [x] Using `X | None` (Python 3.10+ syntax).
 
 4. **Enum Handling**: Literal types vs Python Enum classes?
-   - **Recommendation**: This design assumes enums are not passed in the `Vec<Table>` input. If enum support is needed, add a separate `enums` parameter to the generator or include enum definitions in a preprocessing step.
+   - **Resolution**: Deferred to future work. Currently maps unknown types to `Any`.
 
 ## Future Enhancements
 
-1. **Alembic Migration Generation**: Generate Alembic migration files alongside models
-2. **Pydantic V2 Schemas**: Generate pure Pydantic models for API schemas
-3. **FastAPI Integration**: Generate FastAPI route stubs for CRUD operations
-4. **Custom Validators**: Support for custom Pydantic validators from check constraints
-5. **Type Stubs**: Generate `.pyi` stub files for better IDE support
+1. [ ] **Relationship Generation**: Generate `Relationship()` attributes with back_populates
+2. [ ] **Pydantic Base Models**: Generate Pydantic-only models via `generate_base_models` config
+3. [ ] **User-Defined Enums**: Support PostgreSQL enum types as Python Literal or Enum
+4. [ ] **Generated Columns**: Full `Computed` support with sa_column
+5. [ ] **Single-Column Index**: Generate `Field(index=True)` for indexed columns
+6. [ ] **Default Factory**: Generate `default_factory` for datetime fields with `now()` defaults
+7. [ ] **Module Prefix**: Support `module_prefix` config for import paths
+8. [ ] **String Length Validation**: Use extracted varchar/char length in `Field(max_length=n)`
+9. [ ] **Alembic Migration Generation**: Generate Alembic migration files alongside models
+10. [ ] **FastAPI Integration**: Generate FastAPI route stubs for CRUD operations
+11. [ ] **Custom Validators**: Support for custom Pydantic validators from check constraints
+12. [ ] **Type Stubs**: Generate `.pyi` stub files for better IDE support
