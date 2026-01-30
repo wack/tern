@@ -2,9 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::db::schema::{ColumnName, IndexName, Oid};
-
-use super::types::{Comment, IndexMethod, SqlExpr};
+use crate::schema::{ColumnName, IndexName, Oid};
+use crate::types::{Comment, IndexMethod, SqlExpr};
 
 /// An index on a table.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -3,7 +3,7 @@
 use nutype::nutype;
 use serde::{Deserialize, Serialize};
 
-use crate::db::schema::{CollationName, SchemaName, TableName, TypeName};
+use crate::schema::{CollationName, SchemaName, TableName, TypeName};
 
 // =============================================================================
 // SQL Expression

@@ -1,0 +1,11 @@
+[package]
+name = "tern-ddl"
+version = "0.1.0"
+edition = "2024"
+description = "DDL types for PostgreSQL schema representation"
+repository = "https://github.com/wack/tern"
+
+[dependencies]
+nutype = { version = "0.6.2", features = ["serde"] }
+serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2.0.17"

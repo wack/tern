@@ -1,6 +1,7 @@
 [workspace]
 members = [
   ".",
+  "crates/ddl",
   "crates/tern-migration-wit",
   "crates/tern-migration-guest",
   "crates/tern-migration-runner",
@@ -19,6 +20,7 @@ path = "src/bin/main.rs"
 
 [dependencies]
 # Workspace crates
+tern-ddl = { path = "crates/ddl" }
 tern-migration-wit = { path = "crates/tern-migration-wit" }
 tern-migration-guest = { path = "crates/tern-migration-guest" }
 tern-migration-runner = { path = "crates/tern-migration-runner" }
