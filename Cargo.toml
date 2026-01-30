@@ -1,6 +1,7 @@
 [workspace]
 members = [
   ".",
+  "crates/codegen",
   "crates/ddl",
   "crates/tern-migration-wit",
   "crates/tern-migration-guest",
