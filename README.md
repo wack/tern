@@ -1,5 +1,4 @@
-<img width="1584" height="396" alt="Tern: Migrations that outlive your application code" src="https://github.com/user-attachments/assets/a57cf62d-27c2-4db2-bb90-57f1c8c9cf05" />
-
+<img width="1584" height="396" alt="Tern: Migrations that outlive your application code" src="https://github.com/user-attachments/assets/64168931-e51a-45e7-8628-cd34ff9e5cc8" />
 
 
 # Tern
