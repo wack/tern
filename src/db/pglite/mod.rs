@@ -37,7 +37,7 @@ mod worklist;
 pub use error::{PgLiteError, WorklistError};
 #[cfg(feature = "pglite")]
 pub use runtime::PgLiteRuntime;
-pub use worklist::{ExecutionResult, WorklistExecutor};
+pub use worklist::{ExecutionResult, SqlExecutor, WorklistExecutor};
 
 use std::path::Path;
 
