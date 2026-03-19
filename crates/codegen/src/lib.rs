@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use tern_ddl::Table;
 
+pub mod drizzle;
 pub mod python;
 pub mod rust;
 
