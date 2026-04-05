@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::type_mapping::PythonImport;
 
 /// Collects and organizes Python imports for code generation.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ImportCollector {
     /// Standard library imports grouped by module.
     /// Using BTreeMap/BTreeSet for deterministic ordering.
